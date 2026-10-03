@@ -4,7 +4,7 @@
  * puts it (subagents are secondary shells thrown off their parent's burst, branching upward); shells hang and sparkle
  * while the agent lives, crackle on LLM calls (by tokens) and when busy (decision halos), spit comets on tool
  * calls, pop a red salute on a deny, pull in to a pulsing ember while waiting and fall away as a willow when done.
- * MCP servers are Catherine wheels hanging free in the sky with their backends as drifting lanterns; the knowledge graph is a drift of
+ * MCP servers are faceted crystals hanging free in the sky with their backends as satellites on tilted orbits; the knowledge graph is a drift of
  * embers at the side (only when the session has a graph); a final answer is a gold crossette finale.
  * All sparks are one GPU ring buffer (Sky.tsx SparkField). No ground or water: an open starry sky all the way round.
  */
@@ -28,7 +28,7 @@ export default function Scene() {
   return (
     <KitScene
       title="fireworks · night show"
-      subtitle="Each agent streaks in as a shooting star and bursts into a star shell (subagents = secondary bursts) · shells crackle on LLM calls · ✦ comets on tool calls · red salute = deny · ember = waiting · willow = done · ◎ MCP Catherine wheels with backend lanterns · graph = embers"
+      subtitle="Each agent streaks in as a shooting star and bursts into a star shell (subagents = secondary bursts) · shells crackle on LLM calls · ✦ comets on tool calls · red salute = deny · ember = waiting · willow = done · ◆ MCP crystals with orbiting backend satellites · graph = embers"
       preset={show}
       plane="xy"
       camera={{ position: [0, 0, 34], fov: 46, far: 1200 }}
