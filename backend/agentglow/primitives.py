@@ -1050,7 +1050,7 @@ class Prims:
             ms = max(0, ts - s.start - (_num(a.get("agentglow.pool.wait_ms")) or 0))
             r.calls += 1
             r.ms.append(ms)
-            self._mcp(owner, run, "lease", name, kind, "result", ts, out, ms=ms, device=dev, group=grp)
+            self._mcp(owner, run, "lease", name, kind, "result", ts, out, ms=ms, device=dev, group=grp, error=True if s.status == "error" else None)
 
     def _infer(self, s: "Span", out: list, phase: str) -> None:
         a = s.attrs
@@ -1077,7 +1077,7 @@ class Prims:
             r.unit = unit
         r.dirty = True
         self._mcp(owner, run, "infer", name, "model", "result", ts, out, ms=ms, device=dev, units=units, unit=unit if units else None,
-                  group=grp)
+                  group=grp, error=True if s.status == "error" else None)
 
     # ------------------------------------------------------------------ jobs
     def _job(self, job_id: str, kind: Any, scope: Any, svc: str | None, ts: int, out: list) -> _Job | None:

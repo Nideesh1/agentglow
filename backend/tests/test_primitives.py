@@ -468,3 +468,33 @@ def test_flat_group_field_and_topology_kind():
     assert hub.topology["payment-integrity scorer"]["kind"] == "model"
     assert "kind" not in hub.topology["backend"]
     assert {e["server"] for e in of(list(hub.buffer), "mcp", resource="lgbm")} == {"payment-integrity scorer"}
+
+
+# ---------------------------------------------------------------------------------------------- resource call outcome
+def test_backend_http_call_result_carries_status_and_error(cap):
+    with request(cap):
+        with cap.tracer.start_as_current_span("GET", kind=trace.SpanKind.CLIENT, attributes={
+                "http.request.method": "GET", "server.address": "payments", "server.port": 9100,
+                "url.full": "http://payments:9100/charges/123", "http.response.status_code": 503}):
+            pass
+    evs, _ = feed(cap)
+    res = of(evs, "mcp", phase="result")[0]
+    assert res["server"] == "backend" and res["resource"] == "payments:9100"
+    assert res["status"] == 503 and res["error"] is True and "123" not in str(res)
+
+
+def test_flat_call_status_and_inference_error(cap):
+    c = TestClient(create_app())
+    body = [{"service": "api", "event": "call", "to": "vendor", "kind": "api", "name": "POST", "status": 502, "duration_ms": 30},
+            {"service": "api", "event": "call", "to": "pg", "kind": "db", "name": "SELECT", "duration_ms": 4}]
+    assert c.post("/v1/events", json=body).json()["n"] == 2
+    evs = list(c.app.state.hub.buffer)
+    v = of(evs, "mcp", resource="vendor", phase="result")[0]
+    assert v["status"] == 502 and v["error"] is True
+    assert "error" not in of(evs, "mcp", resource="pg", phase="result")[0]
+    with request(cap):
+        with pytest.raises(RuntimeError):
+            with agentglow.inference("scorer"):
+                raise RuntimeError("boom")
+    evs, _ = feed(cap)
+    assert of(evs, "mcp", resource="scorer", phase="result")[0]["error"] is True

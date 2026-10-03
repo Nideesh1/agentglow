@@ -318,6 +318,7 @@ shared server never receives prompts. `npx agentglow status` shows `prompts: cap
 | sessions (WebSockets, calls, chats) | a live node with a timer, turns and gauges, ending with its outcome |
 | stages / progress | status line under the node (`pick + pack`, `42% · ETA 8s`) and a progress arc |
 | pools / inference | worker and GPU pool resources (`2/3 busy · wait 12ms`), model resources with RTF |
+| resource details | click any MCP server, backend (DB, cache, queue, HTTP host, model, pool) or agent -> server link: calls, errors, p50 / p95, rate, top callers, recent calls, sparkline, plus tools / operation mix / hit ratio / status mix / units / capacity per kind (scrubbed labels only); Esc closes |
 | broker backlog | a ribbon between producer and consumer (`orders 42 · lag 1.2s`), thicker with depth |
 | gates / capacity / rejections | lock badge (`locked · 2 left`), `cap 3/4`, amber flash for a 429 / 503 that is backpressure |
 | lifecycle | tint ring: blue loading / warming, amber degraded, grey draining, red fatal; a pulse on restart |

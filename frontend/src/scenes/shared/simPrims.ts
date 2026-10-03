@@ -23,7 +23,18 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
     { type: "mcp_register", server: "backend", resources: [{ name: "asr-model", kind: "model" }, { name: "cache", kind: "cache" }], ts: ts() },
     // a named resource group of only models (`group=` / AGENTGLOW_RESOURCE_GROUP): labelled "ML · fraud scorer"
     { type: "mcp_register", server: "fraud scorer", kind: "model", resources: [{ name: "risk-model", kind: "model" }], ts: ts() },
+    {
+      type: "mcp_register",
+      server: "backend",
+      resources: [{ name: "postgresql", kind: "db" }, { name: "redis", kind: "cache" }, { name: "orders", kind: "queue" }, { name: "payments:9100", kind: "api" }],
+      ts: ts(),
+    },
   ]);
+  // service backends (Resource details: operation mix, hit ratio, publish / consume, method + status mix)
+  const call = (id: string, resource: string, kind: "db" | "cache" | "queue" | "api", tool: string, ms: number, extra: { status?: number; error?: boolean } = {}) => {
+    emit({ type: "mcp", run_id: run, id, server: "backend", tool, phase: "call", resource, resource_kind: kind, ts: ts() });
+    at(ms, () => emit({ type: "mcp", run_id: run, id, server: "backend", tool, phase: "result", latency_ms: ms, resource, resource_kind: kind, ts: ts(), ...extra }));
+  };
   at(4000, () => emit({ type: "lifecycle", run_id: run, id: WORKER, state: "ready", ts: ts() }));
 
   // a voice session on the api: turns + gauges, ends after ~40 s
@@ -102,6 +113,12 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
       emit({ type: "mcp", run_id: run, id: API, server: "fraud scorer", tool: "infer", phase: "call", resource: "risk-model", resource_kind: "model", ts: ts() });
       at(35, () => emit({ type: "mcp", run_id: run, id: API, server: "fraud scorer", tool: "infer", phase: "result", latency_ms: 35, resource: "risk-model", resource_kind: "model", units: 1, unit: "claims", ts: ts() }));
     }
+    const r = (k * 37) % 100;
+    call(API, "postgresql", "db", r < 60 ? "SELECT" : r < 85 ? "INSERT" : "UPDATE", r < 60 ? 4 + (k % 5) : 9 + (k % 13), r === 99 ? { error: true } : {});
+    call(API, "redis", "cache", k % 3 ? "GET" : "SET", 1);
+    if (k % 2) call(API, "orders", "queue", "publish", 2);
+    else call(WORKER, "orders", "queue", "process", 3);
+    if (k % 3 === 2) call(WORKER, "payments:9100", "api", "POST", 120 + (k % 7) * 20, k % 11 === 5 ? { status: 502, error: true } : { status: 200 });
     if (k % 6 === 0) emit([{ type: "rejected", run_id: run, id: API, reason: "at capacity", retry_after_ms: 2000, status: 503, ts: ts() }, { type: "request", run_id: run, id: API, service: "api", name: "POST /jobs", kind: "http", status: 503, error: false, rejected: true, ms: 2, ts: ts() }]);
     if (k % 8 === 1) {
       const ref = `ch_${1000 + k}`;

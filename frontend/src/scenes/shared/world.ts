@@ -15,6 +15,7 @@
  * Scenes read `world` every frame inside useFrame (mutable, no re-render) and use `useWorld()` for HUD/DOM.
  */
 import { useSyncExternalStore } from "react";
+import { clearResInfo, noteMcp, sameSel, type ResSel } from "./resinfo";
 import { applyPrim, noteRejected, PRIM_NO_LOG, PRIM_QUIET, PRIM_TYPES, tickPrims, type Backlog, type PrimEdge, type PrimState, type PrimWorldEvent, type ResStat } from "./prims";
 export type { PrimState, PrimWorldEvent } from "./prims";
 
@@ -69,7 +70,7 @@ export type WorldEvent =
   // MCP tool call from an agent instance to an external MCP server ("call" when sent, "result" when it returns)
   // topology: an MCP server and the backends behind it (sent at worker startup and to every new viewer)
   | { type: "mcp_register"; run_id?: string; server: string; resources: { name: string; kind: ResourceKind }[]; ts: number; kind?: "model" | "mcp" }
-  | { type: "mcp"; run_id: string; id: string; server: string; tool: string; phase: "call" | "result"; latency_ms?: number; ts: number; resource?: string; resource_kind?: ResourceKind; units?: number; unit?: string; device?: string }
+  | { type: "mcp"; run_id: string; id: string; server: string; tool: string; phase: "call" | "result"; latency_ms?: number; ts: number; resource?: string; resource_kind?: ResourceKind; units?: number; unit?: string; device?: string; error?: boolean; status?: number }
   // generic primitives (docs/SPEC.md "Generic primitives", prims.ts)
   | PrimWorldEvent;
 
@@ -311,6 +312,9 @@ export type Instance = {
   /** backend service agent: requests / errors handled (from `service_stats`) */
   svcN?: number;
   svcErr?: number;
+  /** backend service agent: requests per route and per status class since first seen (Resource details layout) */
+  svcRoutes?: Map<string, number>;
+  svcCodes?: Map<string, number>;
   /** backend service agent: performance.now() of its last traffic (requests / messages in or out); see svcIdle */
   svcAt?: number;
   /** a long-running request of a service shown as its subagent: started / ended (epoch ms, end 0 while open) */
@@ -617,6 +621,8 @@ export const world = {
   archive: new Map<string, Instance>(),
   /** instance selected in the agent panel or by clicking a shape */
   selected: null as string | null,
+  /** a resource selected instead (MCP server / group, backend, agent -> server link): the Resource details panel */
+  selectedRes: null as ResSel | null,
   /** the server answered 401 for this scope/run/token (the HUD shows a notice; no simulator fallback) */
   unauthorized: false,
   /** desk-wide halts (global-scope guard denies, see Halt), keyed by the owning agent */
@@ -1139,6 +1145,10 @@ export function apply(ev: WorldEvent) {
       i.hv!.instances = ev.instances ?? 1; // replicas of this service (`×2` on the halo label)
       i.svcN = (i.svcN ?? 0) + ev.n;
       i.svcErr = (i.svcErr ?? 0) + ev.errors;
+      i.svcRoutes ??= new Map();
+      for (const [r, n] of Object.entries(ev.routes ?? {})) if (i.svcRoutes.has(r) || i.svcRoutes.size < 64) i.svcRoutes.set(r, (i.svcRoutes.get(r) ?? 0) + n);
+      i.svcCodes ??= new Map();
+      for (const [c, n] of Object.entries(ev.codes ?? {})) i.svcCodes.set(c, (i.svcCodes.get(c) ?? 0) + n);
       break;
     }
     case "order": {
@@ -1204,6 +1214,7 @@ export function apply(ev: WorldEvent) {
         srv.inflight++;
         world.stats.mcpCalls++;
       } else srv.inflight = Math.max(0, srv.inflight - 1);
+      noteMcp(ev, now);
       world.mcpCalls.push({ id: ++seq, run: ev.run_id, instance: ev.id, server: ev.server, tool: ev.tool, resource: ev.resource, phase: ev.phase, start: now, dur: 900 });
       const key = `${ev.id}|${ev.server}|${ev.tool}`;
       if (ev.phase === "call") world.mcpPending.set(key, { key, run: ev.run_id, instance: ev.id, server: ev.server, tool: ev.tool, resource: ev.resource, since: now });
@@ -1386,8 +1397,17 @@ export function getInstance(id: string | null | undefined): Instance | undefined
 
 /** Select an agent (panel list click or 3D click); null clears. */
 export function selectInstance(id: string | null) {
-  if (world.selected === id) return;
+  if (world.selected === id && !(id && world.selectedRes)) return;
   world.selected = id;
+  if (id) world.selectedRes = null;
+  notify();
+}
+
+/** Select a resource (server / backend / link) for the Resource details panel; null closes it. */
+export function selectResource(sel: ResSel | null) {
+  if (sameSel(world.selectedRes, sel)) return;
+  world.selectedRes = sel;
+  if (sel) world.selected = null;
   notify();
 }
 
@@ -1419,6 +1439,7 @@ export function resetWorld() {
   world.mcpServers.clear();
   world.mcpRegistry.clear();
   world.mcpKinds.clear();
+  clearResInfo();
   world.mcpCalls.length = 0;
   world.mcpPending.clear();
   world.mcpTools.clear();
@@ -1438,6 +1459,7 @@ export function resetWorld() {
   world.spawnHintAt = 0;
   world.archive.clear();
   world.selected = null;
+  world.selectedRes = null;
   world.unauthorized = false;
   world.hasGraph = false;
   world.hasGraphAt = 0;

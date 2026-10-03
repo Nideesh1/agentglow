@@ -694,6 +694,31 @@ run's agents and show `idle · 4m` on its label. `completed` / `failed` may carr
 session closed for silence, below).
 `step` may carry status `waiting` with `reason` (wait label) and optional `until` (epoch ms); `agent` status `waiting` may
 carry the same `reason` / `until` (see "Waits and long-running runs").
+`mcp` result events may carry `"error": true` (the MCP / backend client / lease / inference span ended with error status, an
+HTTP client got a 5xx, or a flat `call` had an error status) and `"status": <int>` (HTTP client calls and flat `call` with
+a numeric `status`: the code only, never the URL). Both are omitted otherwise, so agent-only output is unchanged.
+
+### Resource details
+Every non-agent icon is clickable in all themes (shared kit `kit/Picks.tsx`): an MCP server / resource group, each of
+its resources (satellites: databases, caches, queues, HTTP hosts, models, pools) and each agent / service -> server
+link used in the last 30 s. Hover = pointer cursor + highlight ring / line; click = the Selected panel shows "Resource
+details"; Esc, "back" or a click on empty space closes it. No new server events: the UI aggregates the `mcp` call /
+result events it already receives (`resinfo.ts`, per server, per `server|resource`, per `agent|server`, since the page
+loaded or the replay began) and reads `resource_stats` / `backlog`:
+- generic: kind icon, name, owner service (top service caller), calls, errors, p50 / p95 latency, rate (calls/s over the
+  last minute), last seen, a 60 s traffic sparkline, top callers (each opens its link), the 25 most recent calls (caller,
+  tool / operation, duration, ok / status / error, time ago);
+- MCP server / group: tools table (calls, p50, p95, errors) and its resources; link: operations on that link, resources
+  reached, last call;
+- database / warehouse / storage: operation mix by verb (first word of the operation: `SELECT`, `INSERT`, `MATCH`) and
+  the slowest operations by p95; cache: hit ratio (`resource_stats` hits / misses, else `hit` / `miss` calls) and command
+  mix; queue / topic: publish vs consume rate, depth / lag / consumer from `backlog`; HTTP host: method and status-class
+  mix (host only); model: units scored, RTF, device, last latency; pool: capacity, in use, waiters, wait p50, devices;
+- service agents: their Selected panel adds a Service section (replicas, handled, errors, p50 / p95, status mix, routes
+  from `service_stats`, backends used); jobs keep their job section (state history, stages, progress + ETA, spawned by).
+Only labels the server already sent through the privacy pipeline appear: operation names, hosts / systems, status codes,
+latencies; never statements, keys, URLs with ids, arguments, results or bodies. Backend service calls are rate-limited to
+one per (agent, resource) per 250 ms on the server, so counts there are a lower bound.
 
 ## Frontend (`frontend/`, npm `agentglow`)
 - App build: gallery at `/`, `/<theme>`; data source = same origin `/live/stream` (`?source=<url>` override, `?sim=1` simulator, `?sim=hf` high-frequency simulator (30 market agents, ~100 decisions/s, paper orders), `?hud=0` hide HUD, `?run=<id>` one run). Output copied to `backend/agentglow/static/`.

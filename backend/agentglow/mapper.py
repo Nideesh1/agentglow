@@ -621,6 +621,8 @@ class Mapper:
             ev = {"type": "mcp", "run_id": s.run, "id": self._owner(s, out), "server": server, "tool": tool, "phase": "result", "latency_ms": max(0, s.end - s.start), "ts": ts}
             if res:
                 ev.update(resource=res, resource_kind=kind)
+            if s.status == "error":
+                ev["error"] = True
             out.append(ev)
         if s.skill:
             out.append({"type": "skill", "run_id": s.run, "id": self._owner(s, out), "name": s.skill, "status": "end", "ts": ts})

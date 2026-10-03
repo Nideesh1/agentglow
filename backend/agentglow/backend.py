@@ -375,8 +375,14 @@ class Services:
     def child_end(self, s: "Span", out: list) -> None:
         if s.backend:
             owner, server, tool, res, kind = s.backend
-            out.append({"type": "mcp", "run_id": s.run, "id": owner, "server": server, "tool": tool, "phase": "result",
-                        "latency_ms": max(0, (s.end or s.start) - s.start), "ts": s.end or s.start, "resource": res, "resource_kind": kind})
+            ev = {"type": "mcp", "run_id": s.run, "id": owner, "server": server, "tool": tool, "phase": "result",
+                  "latency_ms": max(0, (s.end or s.start) - s.start), "ts": s.end or s.start, "resource": res, "resource_kind": kind}
+            code = http_code(s.attrs)
+            if code is not None:
+                ev["status"] = code  # HTTP client calls: the status code only (never the URL)
+            if s.status == "error" or (code is not None and code >= 500):
+                ev["error"] = True
+            out.append(ev)
 
     def admit_task(self, svc_id: str, agent_id: str) -> bool:
         """An agent spawning inside a request of `svc_id`: a subagent while the service has < MAX_TASKS live ones."""
@@ -597,7 +603,13 @@ class Services:
                     self.known.add((GROUP, res))
                     out.append({"type": "mcp_register", "server": GROUP, "resources": [{"name": res, "kind": rk}], "ts": now})
                 base = {"type": "mcp", "run_id": rid, "id": aid, "server": GROUP, "tool": title, "resource": res, "resource_kind": rk}
-                out += [{**base, "phase": "call", "ts": now - ms}, {**base, "phase": "result", "latency_ms": ms, "ts": now}]
+                done = {**base, "phase": "result", "latency_ms": ms, "ts": now}
+                code = _int(e.get("status"))
+                if code is not None:
+                    done["status"] = code
+                if (code is not None and code >= 500) or str(e.get("status")).lower() in ("error", "failed", "fail"):
+                    done["error"] = True
+                out += [{**base, "phase": "call", "ts": now - ms}, done]
             return out
         if kind == "llm":
             ev = {"type": "llm", "run_id": rid, "id": aid, "tokens_in": max(0, _int(e.get("tokens_in")) or 0),

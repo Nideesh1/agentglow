@@ -37,6 +37,10 @@ Resource groups: pools, models and caches hang off one shared group labelled "MC
 `agentglow.watch(..., resource_group="...")` / `agentglow.resource_group("...")` / env `AGENTGLOW_RESOURCE_GROUP`. A group
 holding only models is labelled "ML · payment-integrity scorer"; mixed groups "MCP · <name>".
 
+Click any MCP server, resource (satellite) or agent -> server link in the scene for its Resource details panel: calls,
+errors, p50 / p95, rate, top callers, recent calls, a traffic sparkline, plus per kind: tools (MCP), operation mix (DB),
+hit ratio (cache), publish / consume (queue), method + status mix (HTTP host), units (model), capacity / waiters (pool).
+
 Pool kinds: `model`, `gpu`, `worker` (default). `agentglow.pool(name, ...)` returns the same process-wide pool on
 later calls. Lease objects have `.index` and `.device`. Sync `with p.lease():` works too.
 

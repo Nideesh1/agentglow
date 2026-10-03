@@ -11,7 +11,8 @@ import { ClusterBalls, type ClusterBallProps, type ClusterColor } from "../Clust
 import { Hud } from "../Hud";
 import { LOD_LANES, lod, lodTick, type LodCluster } from "../lod";
 import { useSceneSetup, type Galaxy } from "../useSceneSetup";
-import { tick, useHasGraph, world } from "../world";
+import { selectInstance, selectResource, tick, useHasGraph, world } from "../world";
+import { LinkPicks, ResourcePick } from "./Picks";
 import { applyDim } from "./dim";
 import { FitCamera, setFitProfile, type FitProfile } from "./fit";
 import { LabelScope, labels, labelTick, type LabelScopeValue } from "./labels";
@@ -194,6 +195,7 @@ function Agents({ Agent, Edge, selected, onSelect, radius, height }: { Agent: Co
       <Fizzles scale={radius} />
       <PrimEdges radius={radius} />
       <ServiceLinks radius={radius} />
+      <LinkPicks radius={radius} />
     </>
   );
 }
@@ -217,7 +219,7 @@ function Mcp({ McpServer, Backend }: { McpServer?: ComponentType<McpServerSlotPr
         <Fragment key={m.uid}>
           <LabelScope.Provider value={SCOPE_MCP}>
             {McpServer && (
-              <Fade item={m}>
+              <Fade item={m} pick={<ResourcePick sel={{ type: "server", server: m.name }} r={1.0} color={m.srv.color} mix={() => m.mix} />}>
                 <McpServer mcp={m} />
               </Fade>
             )}
@@ -225,7 +227,7 @@ function Mcp({ McpServer, Backend }: { McpServer?: ComponentType<McpServerSlotPr
           <LabelScope.Provider value={SCOPE_BACKEND}>
             {Backend &&
               [...m.backends.values()].map((b) => (
-                <Fade key={b.uid} item={b}>
+                <Fade key={b.uid} item={b} pick={<ResourcePick sel={{ type: "backend", server: m.name, resource: b.res.name }} r={0.55} color={m.srv.color} mix={() => b.mix * m.mix} />}>
                   <Backend mcp={m} backend={b} />
                   <ResourceStat mcp={m} backend={b} />
                 </Fade>
@@ -243,7 +245,7 @@ function Mcp({ McpServer, Backend }: { McpServer?: ComponentType<McpServerSlotPr
  * Runs before the slots' own useFrames (priority -1, after the ticker's -2): a px-clamped Label3D inside undoes its
  * parents' world scale, and a stale (last-frame) scale would draw it many times too big while the slot fades in.
  */
-function Fade({ item, children }: { item: { pos: THREE.Vector3; mix: number }; children: ReactNode }) {
+function Fade({ item, children, pick }: { item: { pos: THREE.Vector3; mix: number }; children: ReactNode; pick?: ReactNode }) {
   const outer = useRef<THREE.Group>(null);
   const inner = useRef<THREE.Group>(null);
   useFrame(() => {
@@ -260,6 +262,7 @@ function Fade({ item, children }: { item: { pos: THREE.Vector3; mix: number }; c
   return (
     <group ref={outer} scale={0.0001} visible={false}>
       <group ref={inner}>{children}</group>
+      {pick}
     </group>
   );
 }
@@ -336,6 +339,11 @@ const ORIGIN = new THREE.Vector3();
 export function KitScene(p: KitSceneProps) {
   const galaxy = useSceneSetup();
   const [selected, setSelected] = useState<string | null>(null);
+  // also straight into the world: re-clicking the same agent after a resource was selected must select it again
+  const onSelect = useCallback((id: string) => {
+    setSelected(id);
+    selectInstance(id);
+  }, []);
 
   // theme config -> kit (idempotent, set before the first frame)
   config.preset = typeof p.preset === "string" ? PRESETS[p.preset] : p.preset;
@@ -374,7 +382,10 @@ export function KitScene(p: KitSceneProps) {
         camera={{ position: p.camera.position, fov: p.camera.fov ?? 46, near: p.camera.near ?? 0.1, far: p.camera.far ?? 600 }}
         dpr={[1, 2]}
         gl={{ antialias: false, powerPreference: "high-performance", ...p.gl }}
-        onPointerMissed={() => setSelected(null)}
+        onPointerMissed={() => {
+          setSelected(null);
+          selectResource(null);
+        }}
       >
         {p.bg && <color attach="background" args={[p.bg]} />}
         <Ticker />
@@ -384,7 +395,7 @@ export function KitScene(p: KitSceneProps) {
             {p.RunMarker && <Runs RunMarker={p.RunMarker} />}
             {p.GraphResource && <SideGraph galaxy={galaxy} Graph={p.GraphResource} />}
             <Mcp McpServer={p.McpServer} Backend={p.Backend} />
-            <Agents Agent={p.Agent} Edge={p.Edge} selected={selected} onSelect={setSelected} radius={agentRadius} height={p.plane === "xz" ? agentHeight : 0} />
+            <Agents Agent={p.Agent} Edge={p.Edge} selected={selected} onSelect={onSelect} radius={agentRadius} height={p.plane === "xz" ? agentHeight : 0} />
             <LabelScope.Provider value={SCOPE_CLUSTER}>
               <Clusters cluster={p.cluster} Cluster={p.Cluster} offset={p.clusterOffset} />
             </LabelScope.Provider>
