@@ -11,6 +11,7 @@ import { GraphLabel3D, Label3D, type Label3DHandle } from "../shared/Label3D";
 import { KIND_COLOR, world } from "../shared/world";
 import type { GraphSlotProps } from "../shared/kit";
 import { galaxyIdx, galaxyRef, reduced } from "./layout";
+import { graphView, placeDynamic } from "../shared/graphDyn";
 
 function galaxyLayout(n: number) {
   const pts: THREE.Vector3[] = [];
@@ -36,11 +37,8 @@ const LABELS = 6;
 
 export function GalaxyCore({ galaxy: full }: GraphSlotProps) {
   // FalkorDB is shown as a representative sample (named entities first), not the full graph
-  const galaxy = useMemo(() => {
-    const nodes = full.nodes.slice(0, SAMPLE);
-    const ids = new Set(nodes.map((nd) => nd.id));
-    return { nodes, links: full.links.filter((l) => ids.has(l.source) && ids.has(l.target)) };
-  }, [full]);
+  // + the dynamic nodes events touched outside the sample (graphDyn.ts)
+  const galaxy = useMemo(() => graphView(full, SAMPLE), [full]);
   const labelGroups = useRef<(THREE.Group | null)[]>([]);
   const labelDivs = useRef<(Label3DHandle | null)[]>([]);
   const labelOp = useRef<string[]>([]);
@@ -50,7 +48,17 @@ export function GalaxyCore({ galaxy: full }: GraphSlotProps) {
   const rings = useRef<THREE.InstancedMesh>(null);
   const nucleus = useRef<THREE.Mesh>(null);
   const n = galaxy.nodes.length;
-  const pos = useMemo(() => galaxyLayout(n), [n]);
+  // the sampled arms are laid out once per sample size (they never jump when dynamic nodes come and go); dynamic
+  // nodes bud off their anchor star at a hashed offset (same spot for every viewer)
+  const ns = galaxy.ns;
+  const arms = useMemo(() => galaxyLayout(ns), [ns]);
+  const pos = useMemo(() => {
+    if (n === ns) return arms;
+    const flat = new Float32Array(n * 3);
+    arms.forEach((p, i) => p.toArray(flat, i * 3));
+    placeDynamic(galaxy, flat, 0.55);
+    return Array.from({ length: n }, (_, i) => (i < ns ? arms[i] : new THREE.Vector3().fromArray(flat, i * 3)));
+  }, [arms, galaxy, n, ns]);
   const base = useMemo(() => galaxy.nodes.map((nd) => new THREE.Color(KIND_COLOR[nd.kind] ?? "#94a3b8")), [galaxy]);
   const amt = useMemo(() => new Float32Array(Math.max(1, n)), [n]);
   const wrote = useMemo(() => new Uint8Array(Math.max(1, n)), [n]);
@@ -141,6 +149,7 @@ export function GalaxyCore({ galaxy: full }: GraphSlotProps) {
       const f = world.flares[q];
       const age = (now - f.start) / 1000;
       if (age > 1.8) continue;
+      if (f.area) continue;
       const k = galaxyIdx(f.node);
       let dup = false;
       for (let j = 0; j < L; j++) if (labelNode.current[j] === k) dup = true;

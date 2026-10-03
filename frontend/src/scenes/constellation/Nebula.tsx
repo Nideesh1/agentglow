@@ -9,6 +9,7 @@ import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { GraphLabel3D, Label3D, type Label3DHandle } from "../shared/Label3D";
 import { nodeIndex } from "../shared/useSceneSetup";
+import { graphView, placeDynamic } from "../shared/graphDyn";
 import { agentLive, GraphStageSpace, graphToStage, kit, type GraphSlotProps } from "../shared/kit";
 import { KIND_COLOR, hash01, world } from "../shared/world";
 import { ArrowPool, CurvePool, ICE, NEBULA_RX, NEBULA_RY, STAR_C, SparkPool, WHITE, bezier, bow, clamp01, reduced, ringTexture, spriteMat } from "./fx";
@@ -59,7 +60,8 @@ void main(){ float r = length(gl_PointCoord - 0.5) * 2.0; if (r > 1.0) discard;
   gl_FragColor = vec4(vC * (core * 1.25 + halo * 0.4), 1.0); }`;
 
 export function Nebula({ galaxy: full }: GraphSlotProps) {
-  const galaxy = useMemo(() => ({ nodes: full.nodes.slice(0, MAX_NODES), links: full.links }), [full]);
+  // the sample (first MAX_NODES) + the dynamic nodes events touched outside it (graphDyn.ts)
+  const galaxy = useMemo(() => graphView(full, MAX_NODES), [full]);
   const n = galaxy.nodes.length;
   const { size, gl, camera } = useThree();
   const nameRefs = useRef<(Label3DHandle | null)[]>([]);
@@ -93,6 +95,8 @@ export function Nebula({ galaxy: full }: GraphSlotProps) {
       }
       pos.set([x * ct - y * st, x * st + y * ct, (hash01(nd.id, 4) - 0.5) * 4], i * 3);
     });
+    // dynamic nodes bud off their anchor (hashed offset: same spot for every viewer)
+    placeDynamic(galaxy, pos, NEBULA_RX * 0.12);
     const base = galaxy.nodes.map((nd) => new THREE.Color(KIND_COLOR[nd.kind] ?? "#94a3b8").lerp(TINT, 0.45).multiplyScalar(1));
     const baseSize = galaxy.nodes.map((nd) => 0.42 + Math.pow(hash01(nd.id, 5), 4) * 0.55);
     const ngeo = new THREE.BufferGeometry();
@@ -240,6 +244,7 @@ export function Nebula({ galaxy: full }: GraphSlotProps) {
     for (let q = world.flares.length - 1; q >= 0 && shown < MAX_NAMES; q--) {
       const f = world.flares[q];
       if (now - f.start > 2200) break;
+      if (f.area) continue;
       let skip = false;
       for (let z = 0; z < shown; z++) if (nameShown.current[z] === f.node) skip = true;
       if (skip) continue;

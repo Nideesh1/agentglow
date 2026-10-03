@@ -18,7 +18,7 @@ inside the request / handler / job / session they describe, in a process that ra
 | capacity | `agentglow.capacity("slots", used=3, max=4)` | admission limits, concurrency slots | `cap 3/4` gauge |
 | rejected | `agentglow.rejected("busy", retry_after=2, status=503)` | work turned away on purpose (429 / 503) | amber flash; the request is not counted as an error |
 | pool / lease | `p = agentglow.pool("whisper", size=2, kind="gpu", devices=["gpu0", "gpu1"])`; `async with p.lease() as inst:` | model replicas, GPUs, worker slots | a resource node `2/2 busy · wait 12ms`; `lease()` really limits concurrency to `size` |
-| inference | `with agentglow.inference("whisper-small", device=None, units=12.5, unit="audio_s") as inf:` | non-LLM model calls (STT, TTS, embeddings, vision) | a model resource with call pulses and RTF / speed |
+| inference | `with agentglow.inference("whisper-small", device=None, units=12.5, unit="audio_s", group=None) as inf:` | non-LLM model calls (STT, TTS, embeddings, vision, scorers) | a model resource with call pulses and RTF / speed |
 | job | `agentglow.job(order_id, kind="order", state="queued")` / `with agentglow.job(order_id, kind="order", attempt=2, max_attempts=3) as j:` | work keyed by a business id that crosses processes | ONE `job:<id>` node: queued, running, retrying #2, done, dead |
 | link / complete | `agentglow.link(charge_id, label="payment")` ... later `agentglow.complete(charge_id, status="ok")` | an outbound call whose result arrives by webhook / callback | `awaiting payment` on the caller, then a green dashed callback edge |
 | fallback | `agentglow.fallback(from_="inline", to="queue", reason="timeout", job=None)` | a degraded / alternative path was taken | a dashed amber edge (to the job node when `job=` is given, else to service `to`) |
@@ -31,6 +31,15 @@ inside the request / handler / job / session they describe, in a process that ra
 | outcome | `agentglow.mark_error("vendor timeout")` / `agentglow.mark_outcome("failed", reason=None)` | a failure you caught and handled | the request still shows red |
 | wait | `async with agentglow.wait("vendor reply", timeout_s=3600):` | the work is parked on something external (an event, a timer, a reply) | the step / agent shows `waiting on vendor reply` with a countdown; the run stays open |
 | approval | `async with agentglow.approval(timeout_s=900, title="Refund $420", details={...}, url=..., because=d):` | a human must approve before the work goes on | "Needs you" row with Approve / Reject and a details drawer (why, details, recent context, note, Open in app, Copy link) |
+
+Resource groups: pools, models and caches hang off one shared group labelled "MCP · backend". Name it with
+`group="payment-integrity scorer"` on `pool()` / `inference()` / `cache()`, or per process with
+`agentglow.watch(..., resource_group="...")` / `agentglow.resource_group("...")` / env `AGENTGLOW_RESOURCE_GROUP`. A group
+holding only models is labelled "ML · payment-integrity scorer"; mixed groups "MCP · <name>".
+
+Click any MCP server, resource (satellite) or agent -> server link in the scene for its Resource details panel: calls,
+errors, p50 / p95, rate, top callers, recent calls, a traffic sparkline, plus per kind: tools (MCP), operation mix (DB),
+hit ratio (cache), publish / consume (queue), method + status mix (HTTP host), units (model), capacity / waiters (pool).
 
 Pool kinds: `model`, `gpu`, `worker` (default). `agentglow.pool(name, ...)` returns the same process-wide pool on
 later calls. Lease objects have `.index` and `.device`. Sync `with p.lease():` works too.

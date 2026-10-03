@@ -10,7 +10,8 @@ import { decisionTint } from "./kit/DecisionGlyph";
 import { haloHover } from "./kit/HighVolume";
 import { fmtMs, gaugeText, jobStateText, metricText } from "./prims";
 import { PrimDetail } from "./PrimPanel";
-import { STALE_TEXT, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, type Instance, type Run, type WorldEvent } from "./world";
+import { ResourceDetail, ServiceDetail } from "./ResourcePanel";
+import { STALE_TEXT, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, type Instance, type Run, type WorldEvent } from "./world";
 
 export const SCENES = THEMES; // theme nav = every registered theme
 
@@ -46,6 +47,8 @@ export function describe(e: WorldEvent): string {
       return `${short(e.id)} · ${e.tool}(${e.args_preview})`;
     case "graph":
       return `${short(e.id)} ${e.op === "read" ? "read" : "WROTE"} graph: ${e.nodes.slice(0, 2).join(", ")}`;
+    case "graph_nodes":
+      return `graph: ${e.nodes.length} touched nodes restored`;
     case "mcp":
       return e.phase === "call" ? `${short(e.id)} → mcp ${e.server}.${e.tool}()${e.resource ? ` → ${e.resource}` : ""}` : `mcp ${e.server}.${e.tool} returned${e.latency_ms ? ` · ${Math.round(e.latency_ms)}ms` : ""}`;
     case "mcp_register":
@@ -195,6 +198,17 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
   const [info, setInfo] = useState(false); // the theme legend lives behind the (i) toggle
   const [side, setSide] = useState(loadSide);
   const prev = useRef<{ collapsed: boolean; tab: Tab } | null>(null); // where "close" on Selected returns to
+  const closeRef = useRef<(() => void) | null>(null);
+  // Esc closes the Selected inspector (agent or resource), unless typing in a field
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== "Escape" || !closeRef.current || (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      closeRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const small = useRef(false);
   const topRef = useRef<HTMLDivElement>(null);
   const sideRef = useRef<HTMLElement>(null);
@@ -220,8 +234,8 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
     if (!small.current) saveSide(next); // a tiny embed doesn't overwrite the full-size preference
   };
 
-  // selecting an agent (3D click or list) opens Selected; remember where we were for "close"
-  const selId = w.selected;
+  // selecting an agent or a resource (3D click or list) opens Selected; remember where we were for "close"
+  const selId = w.selected ?? (w.selectedRes ? JSON.stringify(w.selectedRes) : null);
   useEffect(() => {
     if (!selId) return;
     setSide((s) => {
@@ -269,6 +283,7 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
   const graph = w.stats.graphReads + w.stats.graphWrites;
   const close = () => {
     selectInstance(null);
+    selectResource(null);
     onClose?.();
     const back = prev.current ?? { collapsed: side.collapsed, tab: "agents" as Tab };
     prev.current = null;
@@ -278,7 +293,9 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
   const here = embedded ? "" : location.pathname.replace(/\/$/, "").slice(1);
   const qs = embedded ? "" : location.search;
   const sel = getInstance(w.selected);
-  const badge: Record<Tab, string> = { agents: alive.length ? `${alive.length}` : "", events: unseen ? (unseen >= 60 ? "60+" : `${unseen}`) : "", selected: sel ? "1" : "" };
+  const selRes = w.selectedRes;
+  const badge: Record<Tab, string> = { agents: alive.length ? `${alive.length}` : "", events: unseen ? (unseen >= 60 ? "60+" : `${unseen}`) : "", selected: sel || selRes ? "1" : "" };
+  closeRef.current = sel || selRes ? close : null;
 
   return (
     <>
@@ -421,7 +438,9 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
           <EventLog />
         </div>
         <div className="hs-body" hidden={side.collapsed || side.tab !== "selected"}>
-          {sel ? (
+          {selRes ? (
+            <ResourceDetail sel={selRes} onClose={close} />
+          ) : sel ? (
             <>
               <div className="ap-head">
                 <button className="ap-link" onClick={close} aria-label="Close agent inspector">
@@ -431,7 +450,7 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
               <AgentDetail i={sel} />
             </>
           ) : (
-            <p className="hs-empty">Click an agent in the scene, the Agents list or the Events log to inspect it.</p>
+            <p className="hs-empty">Click an agent, an MCP server, a backend or a link in the scene (or the Agents list / Events log) to inspect it.</p>
           )}
         </div>
       </aside>
@@ -1292,6 +1311,7 @@ function AgentDetail({ i }: { i: Instance }) {
           </ul>
         </section>
       )}
+      <ServiceDetail i={i} />
       <PrimDetail i={i} />
       {i.decisions.length > 0 && (
         <section>

@@ -10,7 +10,7 @@ import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { Label3D, type Label3DHandle } from "../shared/Label3D";
-import { hash01, mcpGlow, waitSeconds, world, type McpCall } from "../shared/world";
+import { hash01, mcpGlow, mcpTitle, waitSeconds, world, type McpCall } from "../shared/world";
 import { ResourceWire, agentLive, serverPos, type BackendSlotProps, type McpServerSlotProps } from "../shared/kit";
 import { AMBER, LinePool, RED, Trail, WHITE, additive, bezier, bubbles, clamp01, curl, easeInOut, easeOut, lineMat, nowS, reduced } from "./fx";
 
@@ -89,7 +89,7 @@ export function Plate({ mcp }: McpServerSlotProps) {
         <mesh ref={strip} geometry={STRIP_GEO} material={m.strip} visible={false} />
       </group>
       <group ref={lab}>
-        <Label3D text={`MCP · ${srv.name}`} color={srv.color} size={0.28} anchorY="bottom" pxRange={[9, 13]} />
+        <Label3D text={mcpTitle(srv)} color={srv.color} size={0.28} anchorY="bottom" pxRange={[9, 13]} />
       </group>
     </group>
   );

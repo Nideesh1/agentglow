@@ -9,7 +9,8 @@ import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { GraphLabel3D, Label3D, type Label3DHandle } from "../shared/Label3D";
 import { KIND_COLOR, world } from "../shared/world";
-import { nodeIndex, type Galaxy } from "../shared/useSceneSetup";
+import { nodeIndex } from "../shared/useSceneSetup";
+import { dynDir, graphView } from "../shared/graphDyn";
 import { agentLive, kit, stageToGraph, type GraphSlotProps } from "../shared/kit";
 import { ArrowPool, SPHERE_GEO, TYPE_C, addScaled, glowSpriteMaterial, reduced } from "./fx";
 
@@ -22,13 +23,6 @@ const MAX_RIPPLES = 8;
 const MAX_NAMES = 4;
 const WHITE = new THREE.Color(1, 1, 1);
 const TINT = new THREE.Color("#a78bfa");
-
-/** Representative sample of the graph (not a count). */
-function sampleGalaxy(g: Galaxy, max = MAX_NODES): Galaxy {
-  const nodes = g.nodes.slice(0, max);
-  const ids = new Set(nodes.map((nd) => nd.id));
-  return { nodes, links: g.links.filter((l) => ids.has(l.source) && ids.has(l.target)) };
-}
 
 // ------------------------------------------------------------------ shaders
 const pointVert = /* glsl */ `
@@ -71,7 +65,8 @@ void main(){
 }`;
 
 export function Cortex({ galaxy: full }: GraphSlotProps) {
-  const galaxy = useMemo(() => sampleGalaxy(full), [full]);
+  // a representative sample of the graph (not a count) + the dynamic nodes events touched outside it
+  const galaxy = useMemo(() => graphView(full, MAX_NODES), [full]);
   const n = galaxy.nodes.length;
   const { size, gl, camera } = useThree();
   const nameRefs = useRef<(Label3DHandle | null)[]>([]);
@@ -83,10 +78,13 @@ export function Cortex({ galaxy: full }: GraphSlotProps) {
     const pos = new Float32Array(n * 3);
     const unit: THREE.Vector3[] = [];
     const ga = Math.PI * (3 - Math.sqrt(5));
+    const ns = galaxy.ns;
+    const d: [number, number, number] = [0, 0, 0];
     for (let i = 0; i < n; i++) {
-      const y = 1 - (2 * (i + 0.5)) / n;
-      const r = Math.sqrt(1 - y * y);
-      const u = new THREE.Vector3(Math.cos(i * ga) * r, y, Math.sin(i * ga) * r);
+      // sampled nodes: even Fibonacci spacing; dynamic ones: a point hashed from the name (stable for every viewer)
+      const y = 1 - (2 * (i + 0.5)) / Math.max(1, ns);
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const u = i < ns ? new THREE.Vector3(Math.cos(i * ga) * r, y, Math.sin(i * ga) * r) : new THREE.Vector3(...dynDir(galaxy.nodes[i].id, d));
       unit.push(u);
       pos.set([u.x * ORB_R, u.y * ORB_R, u.z * ORB_R], i * 3);
     }
@@ -179,7 +177,7 @@ export function Cortex({ galaxy: full }: GraphSlotProps) {
     }),
     [],
   );
-  const cache = useMemo(() => new Map<string, number>(), []);
+  const cache = useMemo(() => new Map<string, number>(), [galaxy]); // eslint-disable-line react-hooks/exhaustive-deps
   const arrows = useMemo(() => new ArrowPool(MAX_BEAMS), []);
   const tmp = useMemo(() => ({ v: new THREE.Vector3(), v2: new THREE.Vector3(), mid: new THREE.Vector3(), sp: new THREE.Vector3(), c: new THREE.Color(), c2: new THREE.Color() }), []);
   const idx = (name: string) => {
@@ -286,6 +284,7 @@ export function Cortex({ galaxy: full }: GraphSlotProps) {
     for (let qf = world.flares.length - 1; qf >= 0 && shown < MAX_NAMES; qf--) {
       const f = world.flares[qf];
       if (now - f.start > 2200) break;
+      if (f.area) continue;
       let dup = false;
       for (let z = 0; z < shown; z++) if (nameShown.current[z] === f.node) dup = true;
       if (dup) continue;

@@ -15,6 +15,8 @@
  * Scenes read `world` every frame inside useFrame (mutable, no re-render) and use `useWorld()` for HUD/DOM.
  */
 import { useSyncExternalStore } from "react";
+import { clearResInfo, noteMcp, sameSel, type ResSel } from "./resinfo";
+import { areaNames, resetGraphDyn, restoreGraph, touchGraph } from "./graphDyn";
 import { applyPrim, noteRejected, PRIM_NO_LOG, PRIM_QUIET, PRIM_TYPES, tickPrims, type Backlog, type PrimEdge, type PrimState, type PrimWorldEvent, type ResStat } from "./prims";
 export type { PrimState, PrimWorldEvent } from "./prims";
 
@@ -42,7 +44,9 @@ export type WorldEvent =
   // `failed`: a publish that raised (backend services): the comet fizzles out instead of arriving
   | { type: "message"; run_id: string; from_id: string; to_id: string; text: string; ts: number; failed?: boolean }
   | { type: "tool"; run_id: string; id: string; tool: string; args_preview: string; ts: number }
-  | { type: "graph"; run_id: string; id: string; op: "read" | "write"; nodes: string[]; ts: number }
+  | { type: "graph"; run_id: string; id: string; op: "read" | "write"; nodes: string[]; kinds?: (string | null)[]; ts: number }
+  // replay only (first connect): graph nodes touched earlier (oldest first), so a refreshed viewer keeps the dynamic nodes
+  | { type: "graph_nodes"; nodes: { name: string; kind?: string | null; peers?: string[] }[]; run_id?: string; ts?: number }
   | { type: "final"; run_id: string; text: string; ts: number }
   // opt-in (server env AGENTGLOW_CAPTURE_PROMPTS=1, local servers only): one side of a turn on the agent instance
   // `id`, the user's prompt ("user") or the agent's reply ("agent"); secret-redacted and capped by the backend
@@ -68,8 +72,8 @@ export type WorldEvent =
   | { type: "order"; run_id: string; id: string; side: string; qty: number; price?: number; status: OrderStatus; instrument: string; dry_run: boolean; reason?: string; ts: number }
   // MCP tool call from an agent instance to an external MCP server ("call" when sent, "result" when it returns)
   // topology: an MCP server and the backends behind it (sent at worker startup and to every new viewer)
-  | { type: "mcp_register"; run_id?: string; server: string; resources: { name: string; kind: ResourceKind }[]; ts: number }
-  | { type: "mcp"; run_id: string; id: string; server: string; tool: string; phase: "call" | "result"; latency_ms?: number; ts: number; resource?: string; resource_kind?: ResourceKind; units?: number; unit?: string; device?: string }
+  | { type: "mcp_register"; run_id?: string; server: string; resources: { name: string; kind: ResourceKind }[]; ts: number; kind?: "model" | "mcp" }
+  | { type: "mcp"; run_id: string; id: string; server: string; tool: string; phase: "call" | "result"; latency_ms?: number; ts: number; resource?: string; resource_kind?: ResourceKind; units?: number; unit?: string; device?: string; error?: boolean; status?: number }
   // generic primitives (docs/SPEC.md "Generic primitives", prims.ts)
   | PrimWorldEvent;
 
@@ -261,6 +265,11 @@ export const KIND_COLOR: Record<string, string> = {
   Agency: "#ef4444",
   Topic: "#facc15",
   Committee: "#2dd4bf",
+  // a node touched by an event but not in the served sample (no kind given): see graphDyn.ts
+  touched: "#e879f9",
+  Vendor: "#fb923c",
+  Contract: "#60a5fa",
+  Device: "#4ade80",
 };
 
 // ------------------------------------------------------------------ state
@@ -311,6 +320,9 @@ export type Instance = {
   /** backend service agent: requests / errors handled (from `service_stats`) */
   svcN?: number;
   svcErr?: number;
+  /** backend service agent: requests per route and per status class since first seen (Resource details layout) */
+  svcRoutes?: Map<string, number>;
+  svcCodes?: Map<string, number>;
   /** backend service agent: performance.now() of its last traffic (requests / messages in or out); see svcIdle */
   svcAt?: number;
   /** a long-running request of a service shown as its subagent: started / ended (epoch ms, end 0 while open) */
@@ -518,7 +530,11 @@ export const cometOn = (c: Comet, now = performance.now()) => (now - c.start) / 
 /** External MCP servers agents call (persistent "satellites"; registered on first use). */
 /** `kind` = the shape themes draw (shapeKind), `sub` = the reported kind (model, gpu, worker, cache, ...) */
 export type McpResource = { name: string; kind: ShapeKind; sub: ResourceKind; activeAt: number; inflight: number; calls: number };
-export type McpServer = { name: string; color: string; slot: number; activeAt: number; calls: number; inflight: number; resources: Map<string, McpResource> };
+export type McpServer = {
+  name: string; color: string; slot: number; activeAt: number; calls: number; inflight: number; resources: Map<string, McpResource>;
+  /** a named resource group's kind (mcp_register `kind`): "model" = only models (labelled "ML"); absent = MCP */
+  kind?: "model" | "mcp";
+};
 /** One MCP request/response: a packet flying instance → server ("call") or server → instance ("result"). */
 export type McpCall = { id: number; run: string; instance: string; server: string; tool: string; resource?: string; phase: "call" | "result"; start: number; dur: number };
 /** An MCP call that has been sent but not answered yet: draw a live tether instance ↔ server while it waits. */
@@ -532,9 +548,15 @@ export const MCP_COLORS: Record<string, string> = {
   analytics: "#06b6d4",
 };
 
-export type Flare = { id: number; run: string; instance: string; node: string; op: "read" | "write"; start: number };
+/** A graph node lit by a read / write. `area`: lit for an event that named no node (no name label). */
+export type Flare = { id: number; run: string; instance: string; node: string; op: "read" | "write"; start: number; area?: boolean };
 
 /** Finished (exit done/failed) - drawn dimmed until its run ends, then faded out with the whole run. */
+/** The label prefix of an MCP-style server: "ML" for a resource group holding only models, else "MCP". */
+export const mcpPrefix = (srv: Pick<McpServer, "kind">) => (srv.kind === "model" ? "ML" : "MCP");
+/** "MCP · backend", "ML · payment-integrity scorer": the one server label every theme draws. */
+export const mcpTitle = (srv: Pick<McpServer, "kind" | "name">) => `${mcpPrefix(srv)} · ${srv.name}`;
+
 export const isDone = (i: Instance) => i.doneAt > 0;
 /** Working: not finished and not fading out (HUD "alive", LOD budget, cluster counts). */
 export const isLive = (i: Instance) => !i.doneAt && !i.exitAt;
@@ -566,6 +588,8 @@ export const world = {
   mcpServers: new Map<string, McpServer>(),
   /** registered (not necessarily used) MCP servers: server -> backend name -> kind */
   mcpRegistry: new Map<string, Map<string, ResourceKind>>(),
+  /** resource group kinds from mcp_register (`kind`), so a server drawn later gets its ML / MCP label */
+  mcpKinds: new Map<string, "model" | "mcp">(),
   mcpCalls: [] as McpCall[],
   /** in-flight MCP calls keyed `${instance}|${server}|${tool}`; resolvedAt kept briefly for a "snap back" effect */
   mcpPending: new Map<string, McpPending>(),
@@ -606,6 +630,8 @@ export const world = {
   archive: new Map<string, Instance>(),
   /** instance selected in the agent panel or by clicking a shape */
   selected: null as string | null,
+  /** a resource selected instead (MCP server / group, backend, agent -> server link): the Resource details panel */
+  selectedRes: null as ResSel | null,
   /** the server answered 401 for this scope/run/token (the HUD shows a notice; no simulator fallback) */
   unauthorized: false,
   /** desk-wide halts (global-scope guard denies, see Halt), keyed by the owning agent */
@@ -763,7 +789,7 @@ export function apply(ev: WorldEvent) {
   if (evRun) evRun.lastEventAt = now;
   if ("run_id" in ev && dismissed.size) undismissOnActivity(ev);
   // stats windows are not log lines (the halo shows them); everything else goes to the event log
-  if (ev.type !== "mcp_register" && ev.type !== "decision_stats" && ev.type !== "service_stats" && ev.type !== "drives" && !PRIM_NO_LOG.has(ev.type) && !(ev.type === "session" && ev.phase === "progress")) {
+  if (ev.type !== "mcp_register" && ev.type !== "graph_nodes" && ev.type !== "decision_stats" && ev.type !== "service_stats" && ev.type !== "drives" && !PRIM_NO_LOG.has(ev.type) && !(ev.type === "session" && ev.phase === "progress")) {
     world.ticker.unshift(ev);
     if (world.ticker.length > 60) world.ticker.length = 60;
   }
@@ -1128,6 +1154,10 @@ export function apply(ev: WorldEvent) {
       i.hv!.instances = ev.instances ?? 1; // replicas of this service (`×2` on the halo label)
       i.svcN = (i.svcN ?? 0) + ev.n;
       i.svcErr = (i.svcErr ?? 0) + ev.errors;
+      i.svcRoutes ??= new Map();
+      for (const [r, n] of Object.entries(ev.routes ?? {})) if (i.svcRoutes.has(r) || i.svcRoutes.size < 64) i.svcRoutes.set(r, (i.svcRoutes.get(r) ?? 0) + n);
+      i.svcCodes ??= new Map();
+      for (const [c, n] of Object.entries(ev.codes ?? {})) i.svcCodes.set(c, (i.svcCodes.get(c) ?? 0) + n);
       break;
     }
     case "order": {
@@ -1148,21 +1178,33 @@ export function apply(ev: WorldEvent) {
       world.graphAt = now;
       if (ev.run_id) world.graphRuns.add(ev.run_id);
       world.instances.get(ev.id)?.nodes && ev.nodes.forEach((n) => world.instances.get(ev.id)!.nodes.add(n));
+      // names outside the drawn sample become dynamic graph nodes (graphDyn.ts) so every touched node can glow
+      touchGraph(ev.nodes, ev.kinds);
       for (const n of ev.nodes.slice(0, 20)) world.flares.push({ id: ++seq, run: ev.run_id, instance: ev.id, node: n, op: ev.op, start: now });
+      // no node named: light a hashed area of the graph briefly so every hit is visible
+      if (!ev.nodes.length) for (const n of areaNames(`${ev.id}:${seq}`)) world.flares.push({ id: ++seq, run: ev.run_id, instance: ev.id, node: n, op: ev.op, start: now, area: true });
       if (ev.op === "read") world.stats.graphReads += ev.nodes.length;
       else world.stats.graphWrites += ev.nodes.length;
+      break;
+    case "graph_nodes":
+      if (Array.isArray(ev.nodes)) restoreGraph(ev.nodes);
       break;
     case "mcp_register": {
       // topology only: remember names/kinds; the server is drawn once an agent actually calls it
       let reg = world.mcpRegistry.get(ev.server);
       if (!reg) world.mcpRegistry.set(ev.server, (reg = new Map()));
       for (const r of ev.resources) if (!reg.has(r.name)) reg.set(r.name, r.kind);
+      if (ev.kind) {
+        world.mcpKinds.set(ev.server, ev.kind);
+        const drawn = world.mcpServers.get(ev.server);
+        if (drawn) drawn.kind = ev.kind;
+      }
       break;
     }
     case "mcp": {
       let srv = world.mcpServers.get(ev.server);
       if (!srv) {
-        srv = { name: ev.server, color: MCP_COLORS[ev.server] ?? "#94a3b8", slot: world.mcpServers.size, activeAt: now, calls: 0, inflight: 0, resources: new Map() };
+        srv = { name: ev.server, color: MCP_COLORS[ev.server] ?? "#94a3b8", slot: world.mcpServers.size, activeAt: now, calls: 0, inflight: 0, resources: new Map(), kind: world.mcpKinds.get(ev.server) };
         world.mcpServers.set(ev.server, srv);
       }
       srv.activeAt = now;
@@ -1188,6 +1230,7 @@ export function apply(ev: WorldEvent) {
         srv.inflight++;
         world.stats.mcpCalls++;
       } else srv.inflight = Math.max(0, srv.inflight - 1);
+      noteMcp(ev, now);
       world.mcpCalls.push({ id: ++seq, run: ev.run_id, instance: ev.id, server: ev.server, tool: ev.tool, resource: ev.resource, phase: ev.phase, start: now, dur: 900 });
       const key = `${ev.id}|${ev.server}|${ev.tool}`;
       if (ev.phase === "call") world.mcpPending.set(key, { key, run: ev.run_id, instance: ev.id, server: ev.server, tool: ev.tool, resource: ev.resource, since: now });
@@ -1370,8 +1413,17 @@ export function getInstance(id: string | null | undefined): Instance | undefined
 
 /** Select an agent (panel list click or 3D click); null clears. */
 export function selectInstance(id: string | null) {
-  if (world.selected === id) return;
+  if (world.selected === id && !(id && world.selectedRes)) return;
   world.selected = id;
+  if (id) world.selectedRes = null;
+  notify();
+}
+
+/** Select a resource (server / backend / link) for the Resource details panel; null closes it. */
+export function selectResource(sel: ResSel | null) {
+  if (sameSel(world.selectedRes, sel)) return;
+  world.selectedRes = sel;
+  if (sel) world.selected = null;
   notify();
 }
 
@@ -1402,6 +1454,8 @@ export function resetWorld() {
   world.flares.length = 0;
   world.mcpServers.clear();
   world.mcpRegistry.clear();
+  world.mcpKinds.clear();
+  clearResInfo();
   world.mcpCalls.length = 0;
   world.mcpPending.clear();
   world.mcpTools.clear();
@@ -1421,11 +1475,13 @@ export function resetWorld() {
   world.spawnHintAt = 0;
   world.archive.clear();
   world.selected = null;
+  world.selectedRes = null;
   world.unauthorized = false;
   world.hasGraph = false;
   world.hasGraphAt = 0;
   world.graphRuns.clear();
   world.graphAt = 0;
+  resetGraphDyn();
   world.halts.clear();
   globalBy.clear();
   world.primEdges.length = 0;

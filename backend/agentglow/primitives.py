@@ -57,7 +57,9 @@ SIGNALS = ("progress", "capacity", "rejected", "job", "link", "complete", "fallb
 LIFECYCLE = ("loading", "warming", "ready", "degraded", "draining", "restarting", "fatal")
 JOB_STATES = ("queued", "running", "retrying", "done", "failed", "dead")
 POOL_KINDS = ("model", "gpu", "worker")
-GROUP = "backend"  # the synthetic resource group (backend.py) pools, models and caches join
+GROUP = "backend"  # the synthetic resource group (backend.py) pools, models and caches join by default
+GROUP_ATTR = "agentglow.resource.group"  # a named resource group instead (lease / inference spans)
+_group_default: list = [None]  # process-wide default: resource_group() / watch(resource_group=...)
 MAX_FIELDS = 8
 
 
@@ -85,6 +87,17 @@ def _safe_fields(fields: dict) -> dict:
 
 
 # ============================================================================================ producer API
+def resource_group(name: str | None) -> None:
+    """Process-wide default resource group for pools, models and caches (default: env AGENTGLOW_RESOURCE_GROUP, else
+    the shared `backend` group). A group holding only models is shown as "ML · <name>"."""
+    _group_default[0] = str(name) if name else None
+
+
+def _group(group: Any) -> str | None:
+    g = group or _group_default[0] or os.environ.get("AGENTGLOW_RESOURCE_GROUP")
+    return str(g)[:40] if g else None
+
+
 def capture() -> Any:
     """The current OTel context (the spawning request): pass it as `session(..., parent=ctx)` / `job(..., parent=ctx)`
     when the work runs later in a detached task or thread."""
@@ -217,8 +230,9 @@ class Pool:
     """A pool of `size` interchangeable instances (model replicas, GPUs, workers). `lease()` really limits concurrency
     to `size` (sync `with` and `async with`) and reports wait time vs use time per lease, device labels and busy counts."""
 
-    def __init__(self, name: str, size: int, kind: str = "worker", devices: list | None = None) -> None:
+    def __init__(self, name: str, size: int, kind: str = "worker", devices: list | None = None, group: str | None = None) -> None:
         self.name, self.size, self.kind = name, max(1, int(size)), kind if kind in POOL_KINDS else "worker"
+        self.group = group
         devs = list(devices or [])
         self.devices = [str(devs[k % len(devs)]) if devs else None for k in range(self.size)]
         self._lock = threading.Lock()
@@ -303,7 +317,8 @@ class Lease(DualUse):
         self._span = _Span(f"lease {p.name}", {"agentglow.pool": p.name, "agentglow.pool.kind": p.kind,
                                                "agentglow.pool.size": p.size, "agentglow.pool.device": self.device,
                                                "agentglow.pool.instance": self.index, "agentglow.pool.wait_ms": wait_ms,
-                                               "agentglow.pool.waiting": waiting}, start_ns=t0).start()
+                                               "agentglow.pool.waiting": waiting, GROUP_ATTR: _group(p.group)},
+                           start_ns=t0).start()
         return self
 
     def _close(self, exc: BaseException | None) -> None:
@@ -334,12 +349,13 @@ _pools: dict[str, Pool] = {}
 _pools_lock = threading.Lock()
 
 
-def pool(name: str, size: int, kind: str = "worker", devices: list | None = None) -> Pool:
-    """The process-wide pool `name` (created on first call; later calls return it)."""
+def pool(name: str, size: int, kind: str = "worker", devices: list | None = None, group: str | None = None) -> Pool:
+    """The process-wide pool `name` (created on first call; later calls return it). `group`: the resource group it
+    joins (default: resource_group() / env AGENTGLOW_RESOURCE_GROUP, else `backend`)."""
     with _pools_lock:
         p = _pools.get(name)
         if p is None:
-            p = _pools[name] = Pool(name, size, kind, devices)
+            p = _pools[name] = Pool(name, size, kind, devices, group)
         return p
 
 
@@ -347,9 +363,11 @@ class Inference(_Span):
     """A non-LLM model call (speech-to-text, TTS, embeddings, vision): `units` of work in `unit` (speed = units/s,
     RTF = seconds per unit for `*_s` units)."""
 
-    def __init__(self, model: str, device: str | None = None, units: float | None = None, unit: str = "audio_s") -> None:
+    def __init__(self, model: str, device: str | None = None, units: float | None = None, unit: str = "audio_s",
+                 group: str | None = None) -> None:
         super().__init__(f"inference {model}", {"agentglow.inference.model": model, "agentglow.inference.device": device,
-                                                "agentglow.inference.units": _num(units), "agentglow.inference.unit": unit})
+                                                "agentglow.inference.units": _num(units), "agentglow.inference.unit": unit,
+                                                GROUP_ATTR: _group(group)})
 
     @property
     def units(self) -> float | None:
@@ -361,12 +379,13 @@ class Inference(_Span):
         self.set("agentglow.inference.units", _num(v))
 
 
-def inference(model: str, device: Any = None, units: Any = None, unit: str = "audio_s") -> Inference:
+def inference(model: str, device: Any = None, units: Any = None, unit: str = "audio_s", group: str | None = None) -> Inference:
     """`with agentglow.inference("whisper-small", units=12.5, unit="audio_s") as inf:` or as a decorator
     `@agentglow.inference("whisper-small", units=lambda audio, **_: len(audio) / 16000)` (`units` / `device` may be
-    callables over the call's arguments)."""
-    return rebuild(Inference(model, device=None if callable(device) else device, units=None if callable(units) else units, unit=unit),
-                   lambda c: Inference(model, device=c.value(device, "device"), units=c.value(units, "units"), unit=unit))
+    callables over the call's arguments). `group`: the resource group the model joins (e.g. "payment-integrity
+    scorer"; default: resource_group() / env AGENTGLOW_RESOURCE_GROUP, else `backend`)."""
+    return rebuild(Inference(model, device=None if callable(device) else device, units=None if callable(units) else units, unit=unit, group=group),
+                   lambda c: Inference(model, device=c.value(device, "device"), units=c.value(units, "units"), unit=unit, group=group))
 
 
 class Job(_CtxSpan):
@@ -457,9 +476,9 @@ def event(kind: str, label: str | None = None, **fields: Any) -> None:
     _Span(f"event {kind}", attrs).start().end()
 
 
-def cache(name: str, hit: bool = True) -> None:
-    """One cache lookup (hit rate on the cache's resource node)."""
-    _signal("cache", {"name": name, "hit": bool(hit)})
+def cache(name: str, hit: bool = True, group: str | None = None) -> None:
+    """One cache lookup (hit rate on the cache's resource node); `group` as for pool()."""
+    _signal("cache", {"name": name, "hit": bool(hit), "group": _group(group)})
 
 
 # ---------------------------------------------------------------------------------------- waits / human approval
@@ -822,6 +841,7 @@ class Prims:
         self.sessions: dict[str, str] = {}  # flat session key -> node id
         self.links: dict[tuple, tuple] = {}  # (scope, ref) -> (owner, run, ts, label)
         self.res: dict[tuple, _Res] = {}  # (server, resource) -> stats window
+        self.group_kinds: dict[str, str] = {}  # named resource group -> "model" (only models so far) / "mcp"
         self.last: dict[tuple, int] = {}  # rate limits
         self.eta: dict[str, tuple] = {}  # owner -> (t0, f0, last frac)
         self.state: dict[tuple, dict] = {}  # (kind, owner, name) -> latest lifecycle / gate / capacity event (replay)
@@ -973,19 +993,28 @@ class Prims:
         if "agentglow.inference.model" in a:
             self._infer(s, out, "result")
 
-    def _resource(self, name: str, kind: str, run: str, ts: int, out: list) -> _Res:
-        key = (GROUP, name)
+    def _resource(self, name: str, kind: str, run: str, ts: int, out: list, group: str = GROUP) -> _Res:
+        key = (group, name)
         r = self.res.get(key)
         if r is None:
             r = self.res[key] = _Res(kind, run)
         if key not in self.m.svc.known:
             self.m.svc.known.add(key)
-            out.append({"type": "mcp_register", "server": GROUP, "resources": [{"name": name, "kind": kind}], "ts": ts})
+            ev = {"type": "mcp_register", "server": group, "resources": [{"name": name, "kind": kind}], "ts": ts}
+            if group != GROUP:  # a named group: "model" while it holds only models (shown as ML), else "mcp"
+                prev = self.group_kinds.get(group)
+                ev["kind"] = self.group_kinds[group] = "model" if kind == "model" and prev in (None, "model") else "mcp"
+            out.append(ev)
         r.run = run
         return r
 
-    def _mcp(self, owner: str, run: str, tool: str, res: str, kind: str, phase: str, ts: int, out: list, ms: float | None = None, **extra) -> None:
-        ev = {"type": "mcp", "run_id": run, "id": owner, "server": GROUP, "tool": tool, "phase": phase, "ts": ts,
+    @staticmethod
+    def _group_of(v: Any) -> str:
+        return _label(v) or GROUP
+
+    def _mcp(self, owner: str, run: str, tool: str, res: str, kind: str, phase: str, ts: int, out: list, ms: float | None = None,
+             group: str = GROUP, **extra) -> None:
+        ev = {"type": "mcp", "run_id": run, "id": owner, "server": group, "tool": tool, "phase": phase, "ts": ts,
               "resource": res, "resource_kind": kind}
         if ms is not None:
             ev["latency_ms"] = round(ms, 1)
@@ -1001,7 +1030,8 @@ class Prims:
         owner = self.m._owner(s, out)
         run = self._run_of(owner, s.run)
         ts = s.start if phase == "call" else (s.end or s.start)
-        r = self._resource(name, kind, run, ts, out)
+        grp = self._group_of(a.get(GROUP_ATTR))
+        r = self._resource(name, kind, run, ts, out, grp)
         size = _num(a.get("agentglow.pool.size"))
         r.size = int(size) if size else r.size
         dev = _label(a.get("agentglow.pool.device"), 24) or None
@@ -1014,13 +1044,13 @@ class Prims:
             if w is not None:
                 r.waits.append(w)
             r.waiting = int(_num(a.get("agentglow.pool.waiting")) or 0)
-            self._mcp(owner, run, "lease", name, kind, "call", ts, out, device=dev)
+            self._mcp(owner, run, "lease", name, kind, "call", ts, out, device=dev, group=grp)
         else:
             r.open.pop(s.id, None)
             ms = max(0, ts - s.start - (_num(a.get("agentglow.pool.wait_ms")) or 0))
             r.calls += 1
             r.ms.append(ms)
-            self._mcp(owner, run, "lease", name, kind, "result", ts, out, ms=ms, device=dev)
+            self._mcp(owner, run, "lease", name, kind, "result", ts, out, ms=ms, device=dev, group=grp, error=True if s.status == "error" else None)
 
     def _infer(self, s: "Span", out: list, phase: str) -> None:
         a = s.attrs
@@ -1030,11 +1060,12 @@ class Prims:
         owner = self.m._owner(s, out)
         run = self._run_of(owner, s.run)
         ts = s.start if phase == "call" else (s.end or s.start)
-        r = self._resource(name, "model", run, ts, out)
+        grp = self._group_of(a.get(GROUP_ATTR))
+        r = self._resource(name, "model", run, ts, out, grp)
         dev = _label(a.get("agentglow.inference.device"), 24) or None
         unit = _label(a.get("agentglow.inference.unit"), 16) or None
         if phase == "call":
-            self._mcp(owner, run, "infer", name, "model", "call", ts, out, device=dev)
+            self._mcp(owner, run, "infer", name, "model", "call", ts, out, device=dev, group=grp)
             return
         ms = max(0, ts - s.start)
         units = _num(a.get("agentglow.inference.units"))
@@ -1045,7 +1076,8 @@ class Prims:
             r.units += units
             r.unit = unit
         r.dirty = True
-        self._mcp(owner, run, "infer", name, "model", "result", ts, out, ms=ms, device=dev, units=units, unit=unit if units else None)
+        self._mcp(owner, run, "infer", name, "model", "result", ts, out, ms=ms, device=dev, units=units, unit=unit if units else None,
+                  group=grp, error=True if s.status == "error" else None)
 
     # ------------------------------------------------------------------ jobs
     def _job(self, job_id: str, kind: Any, scope: Any, svc: str | None, ts: int, out: list) -> _Job | None:
@@ -1246,7 +1278,8 @@ class Prims:
             cname = _label(f.get("name") or "cache")
             hit = f.get("hit")
             hit = hit is True or str(hit).lower() in ("true", "1", "yes", "hit")
-            r = self._resource(cname, "cache", run, ts, out)
+            grp = self._group_of(f.get("group"))
+            r = self._resource(cname, "cache", run, ts, out, grp)
             if hit:
                 r.hits += 1
             else:
@@ -1254,8 +1287,8 @@ class Prims:
             r.dirty = True
             if not self._limited(("cache", owner, cname), ts, CACHE_PULSE_MS):
                 tool = "hit" if hit else "miss"
-                self._mcp(owner, run, tool, cname, "cache", "call", ts, out)
-                self._mcp(owner, run, tool, cname, "cache", "result", ts, out, ms=0)
+                self._mcp(owner, run, tool, cname, "cache", "call", ts, out, group=grp)
+                self._mcp(owner, run, tool, cname, "cache", "result", ts, out, ms=0, group=grp)
         elif name == "gauge":
             g = {_key(k): round(v, 3) for k, v in ((k, _num(v)) for k, v in f.items()) if v is not None}
             if not g or self._limited(("gauge", owner), ts, RATE_MS["gauge"]):
@@ -1298,7 +1331,8 @@ class Prims:
             rk = str(e.get("kind") or ("worker" if kind == "lease" else "model"))
             rk = rk if kind == "inference" or rk in POOL_KINDS else "worker"
             rk = "model" if kind == "inference" else rk
-            r = self._resource(res, rk, run, now, out)
+            grp = self._group_of(e.get("group"))
+            r = self._resource(res, rk, run, now, out, grp)
             r.calls += 1
             r.ms.append(ms)
             r.dirty = True
@@ -1317,8 +1351,8 @@ class Prims:
                     r.units += units
                     r.unit = _label(e.get("unit") or "units", 16)
             tool = "lease" if kind == "lease" else "infer"
-            self._mcp(owner, run, tool, res, rk, "call", int(now - ms), out, device=dev)
-            self._mcp(owner, run, tool, res, rk, "result", now, out, ms=ms, device=dev)
+            self._mcp(owner, run, tool, res, rk, "call", int(now - ms), out, device=dev, group=grp)
+            self._mcp(owner, run, tool, res, rk, "result", now, out, ms=ms, device=dev, group=grp)
         else:
             f = dict(e)
             if kind == "job":

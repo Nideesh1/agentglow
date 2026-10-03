@@ -12,7 +12,10 @@ import { Pulses, Soma } from "./Agents";
 import { Cortex, ORB_R } from "./Cortex";
 import { reduced } from "./fx";
 import { RunAura } from "./Hatchet";
-import { Backend, Senses, Server } from "./Senses";
+import { Senses } from "./Senses";
+
+/** the kit MCP crystal in this theme's palette */
+const MCP_STYLE = { tint: "#c084fc", tintAmt: 0.2, gain: 0.9 };
 
 export default function Scene() {
   return (
@@ -29,8 +32,7 @@ export default function Scene() {
       Background={<Stars radius={80} depth={40} count={reduced ? 1200 : 3500} factor={2.6} saturation={0.6} fade speed={0.4} />}
       Agent={Soma}
       RunMarker={RunAura}
-      McpServer={Server}
-      Backend={Backend}
+      mcpStyle={MCP_STYLE}
       GraphResource={Cortex}
       cluster={{ radius: 1.45, variant: "orb" }}
       PostFX={

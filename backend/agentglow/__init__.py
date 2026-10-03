@@ -12,10 +12,10 @@ from .scope import ScopeSpanProcessor, scope, set_scope  # noqa: E402
 from .watch import mark_error, mark_outcome, pulse, register_mcp, watch  # noqa: E402
 from .manual import agent, current_agent, decided, decision, graph, llm, mcp, order, run, skill, tool, traced_agent, traced_tool  # noqa: E402
 from .primitives import (backlog, cache, capacity, capture, complete, event, fallback, gate, inference, job, lifecycle,  # noqa: E402
-                         link, metric, pool, progress, rejected, sample_backlog, session, session_ws, stage, traced, wait, approval)
+                         link, metric, pool, progress, rejected, resource_group, sample_backlog, session, session_ws, stage, traced, wait, approval)
 
 __all__ = ["watch", "pulse", "register_mcp", "mark_error", "mark_outcome", "LiveSpanProcessor", "ScopeSpanProcessor", "scope", "set_scope", "make_token",
            "verify_token", "__version__",
            "run", "agent", "llm", "tool", "mcp", "graph", "skill", "decision", "decided", "order", "traced_agent", "traced_tool", "current_agent",
            "session", "session_ws", "capture", "stage", "progress", "capacity", "rejected", "pool", "inference", "job", "link",
-           "complete", "fallback", "gate", "backlog", "sample_backlog", "lifecycle", "metric", "event", "cache", "traced", "wait", "approval"]
+           "complete", "fallback", "gate", "backlog", "sample_backlog", "lifecycle", "metric", "event", "cache", "resource_group", "traced", "wait", "approval"]

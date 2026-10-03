@@ -199,8 +199,8 @@ class Agent(_Span):
     def mcp(self, server: str, tool: str | None = None, resource: str | None = None, kind: str = "api", args: Any = None) -> "Tool":
         return mcp(server, tool, resource, kind, args, parent=self)
 
-    def graph(self, op: str = "read", nodes: list | None = None, system: str = "graph") -> _Span:
-        return graph(op, nodes, system, parent=self)
+    def graph(self, op: str = "read", nodes: list | None = None, system: str = "graph", kinds: list | None = None) -> _Span:
+        return graph(op, nodes, system, parent=self, kinds=kinds)
 
     def skill(self, name: str) -> "Tool":
         return skill(name, parent=self)
@@ -362,9 +362,12 @@ def mcp(server: str, tool: str | None = None, resource: str | None = None, kind:
     return rebuild(Tool(name, args, parent=parent, extra=extra), lambda c: Tool(name, args, parent=parent, extra=extra))
 
 
-def graph(op: str = "read", nodes: list | None = None, system: str = "graph", parent: _Span | None = None) -> _Span:
-    """`with agentglow.graph("write", nodes=["Patient", "Appointment"]):` - a knowledge-graph / DB read or write."""
-    attrs = {"db.system": system, "agentglow.db.op": op, "agentglow.graph.nodes": [str(n) for n in (nodes or [])] or None}
+def graph(op: str = "read", nodes: list | None = None, system: str = "graph", parent: _Span | None = None,
+          kinds: list | None = None) -> _Span:
+    """`with agentglow.graph("write", nodes=["Patient", "Appointment"]):` - a knowledge-graph / DB read or write.
+    `kinds`: optional node kinds parallel to `nodes` (colors nodes the viewer adds outside its graph sample)."""
+    attrs = {"db.system": system, "agentglow.db.op": op, "agentglow.graph.nodes": [str(n) for n in (nodes or [])] or None,
+             "agentglow.graph.kinds": [str(k or "") for k in kinds] if kinds else None}
     return rebuild(_Span(f"db {op}", attrs, parent=parent), lambda c: _Span(f"db {op}", attrs, parent=parent))
 
 

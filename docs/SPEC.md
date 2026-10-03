@@ -51,8 +51,20 @@ Optional React embed: `npm i agentglow` → `<AgentScene theme="neural" source="
     agents in all (`AGENTGLOW_SNAPSHOT_AGENTS`), 32 state entries per agent, 64 steps per run; beyond them the
     oldest is forgotten. Pulses (llm, tool, mcp, messages, requests) and token totals are not snapshotted: a fresh
     viewer sees the current agents, then counts from now.
+    A fresh viewer (not a resume) also gets ONE `graph_nodes` event right after the MCP topology: the node names
+    `graph` events touched so far (even by ended runs), oldest first, `{"type": "graph_nodes", "nodes": [{"name",
+    "kind"?, "peers"?: [co-touched names]}], "ts"}`, LRU-bounded to 600 names (`AGENTGLOW_GRAPH_TOUCHED`), filtered
+    by the viewer's scope / run (the last run that touched each name). It lights nothing; the viewer rebuilds its
+    dynamic graph nodes from it (below).
   - `POST /live/topology` - `{server, resources:[{name, kind}]}` → `mcp_register` (also `agentglow.register_mcp(...)`).
   - `GET /live/graph` - optional graph sample `{nodes:[{id,name,kind}],links:[{source,target}]}`; FalkorDB provider when `AGENTGLOW_FALKOR_URL`/`--falkor` set (graph name = the URL path, else `AGENTGLOW_FALKOR_GRAPH`, default `demo`), else an empty graph `{nodes: [], links: []}` → UI uses its built-in sample.
+    Dynamic nodes (every theme, `frontend/src/scenes/shared/graphDyn.ts`): the sample is the first 220 nodes, so in a big
+    graph most touched nodes are not in it. A `graph` event naming a node outside the drawn sample ADDS it: a new
+    point (position hashed from the name: the same for every viewer and after a refresh; it buds off the sample
+    node sharing most words with its name, else a hashed one), kind from the event `kinds` (else `touched`), linked to
+    the other nodes named in the same event; then it glows like a sampled node (reads and writes keep their styles).
+    At most 400 dynamic nodes, least recently touched evicted first; sampled nodes are never evicted. A `graph`
+    event naming no node lights a hashed area (a sample node and its neighbours) briefly, without name labels.
   - `GET /live/run` / `POST /live/run`, `POST /live/approve` - optional run / approve webhooks (see "Scopes & auth").
   - `GET /live/health`; static UI at `/`, `/<theme>`, assets.
   - Ingest bodies may be gzip (`content-encoding: gzip`).
@@ -173,7 +185,7 @@ any ancestor (HatchetInstrumentor attrs), else `agentglow.run.id`, else the trac
 | LLM | OpenInference kind `LLM` or `gen_ai.operation.name ∈ {chat, text_completion, generate_content}` | `agent thinking` on start; `llm` on end - a span guessed from its parent node but ending with a non-LLM kind (react agent's RunnableSequence/call_model/should_continue) is dropped (tokens from `gen_ai.usage.input_tokens/output_tokens` or `llm.token_count.prompt/completion`; cache reads from `gen_ai.usage.cache_read_input_tokens`, `gen_ai.usage.cache_read.input_tokens` or `llm.token_count.prompt_details.cache_read`, cache writes from the matching `cache_creation` / `cache_write` keys) |
 | Tool | OpenInference kind `TOOL` or `gen_ai.operation.name=execute_tool` | `tool` |
 | MCP | span with `mcp.server.name` or `agentglow.mcp.server` (+ `agentglow.mcp.resource`, `agentglow.mcp.resource_kind` ∈ db,warehouse,spark,api,storage,queue) | `mcp call` (start, pending) / `mcp result` (end); auto `mcp_register` of server+resource. An MCP span whose parent span is not known yet (the MCP server's process reported before the caller's tool span) is held until the parent arrives (with the spans inside it), dropped after 10 s; it never starts a run. An MCP span naming no resource gets its backends auto-discovered: every DB / cache / HTTP CLIENT span inside it (see "Backend services") = `mcp_register` of that server + resource and an `mcp` call/result with `resource`, on the caller's agent; a manual `agentglow.mcp.resource` wins (nothing is discovered under it). `agentglow.watch(mcp=fastmcp_server)` opens such a span (`mcp <server>.<tool>`, SERVER kind) around every FastMCP tool call |
-| Graph/DB | `db.system` set | `graph` read/write (`agentglow.db.op` or inferred from query text); node names from `agentglow.graph.nodes` (list or JSON string) |
+| Graph/DB | `db.system` set | `graph` read/write (`agentglow.db.op` or inferred from query text); node names from `agentglow.graph.nodes` (list or JSON string); items may be `{"name", "kind"}` objects, kinds may also come parallel in `agentglow.graph.kinds` → event `kinds` (parallel to `nodes`, `null` = unknown; omitted when none is known) |
 | Final | `agentglow.final` attr on any span | `final` text |
 | Skill | hint attribute `agentglow.skill` = skill name on any span (usually a tool span); set by the Claude Code hooks adapter for the `Skill` tool (`tool_input.skill`, e.g. `hello`, `plugin:skill`), by the traces-only path from the `claude_code.tool` span's `skill_name` (needs `OTEL_LOG_TOOL_DETAILS=1`), and by the manual `skill()` | `skill` `status: "start"` when the span starts (or at end if the attribute only arrives then), `"end"` when it ends, on the owning agent; the normal `tool` event is still emitted (Claude Code `Skill` args preview = the skill name only) |
 | Framework skills (inferred) | deepagents: TOOL `read_file` whose `input.value` `file_path` matches `^(.*/)?<skill>/SKILL\.md$` (skill = parent dir); confirmed against `skills_metadata[].path` from a `SkillsMiddleware.before_agent` span's `output.value` when known (cached per `thread_id`, else trace: it is emitted only on a thread's first turn); `offset > 0` re-reads, `write_file`/`edit_file`/`ls`/`glob`/`grep` never count. OpenAI Agents SDK: TOOL `load_skill` (`input.value.skill_name`); TOOL `shell`/`exec_command`/`local_shell`/`bash`/`run_shell_command` whose command strings READ a skill file (`cat`/`sed`/`head`/`less`/`more`/`bat` ... `<skill>/SKILL.md`, no redirect, not `sed -i`; a trailing `-<32 hex>` mount suffix is stripped); hosted shell: an LLM span's `output.value` `output[]` items `type: shell_call` (`action.commands`, once per `call_id`; `input.value` is never scanned) | same `skill` start/end on the owning agent (tool span start/end; hosted shell: both at the LLM span's end); one use per (agent, skill) (deepagents also per path) |
@@ -363,7 +375,7 @@ SDK provider = no-op. Context in contextvars (asyncio tasks created inside inher
 | `llm(model, tokens_in, tokens_out)` / `Agent.llm(..., latency_ms=0)` | `chat <model>` | `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.usage.input_tokens/output_tokens` (`.set_tokens`) |
 | `tool(name, args=None)` | `<name>` | `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `input.value` = args JSON; `.result(v)` → `output.value` |
 | `mcp(server, tool, resource=None, kind="api", args=None)` | tool span | + `agentglow.mcp.server/tool/resource/resource_kind` |
-| `graph(op, nodes, system="graph")` | `db <op>` | `db.system`, `agentglow.db.op`, `agentglow.graph.nodes` |
+| `graph(op, nodes, system="graph", kinds=None)` | `db <op>` | `db.system`, `agentglow.db.op`, `agentglow.graph.nodes`, `agentglow.graph.kinds` |
 | `skill(name)` / `Agent.skill(name)` | tool span `<name>` | as `tool` + `agentglow.skill=name` (skill badge on the current agent while the block runs) |
 | `decision(kind, question, result=None, p=None, options=None, provider="llm", purpose=None, target=None)` / `Agent.decision(...)` | `decision <kind>` | the "Decisions" attributes; `.record(result, p, options, target)` sets the outcome before the block ends; a bool `result` → `yes`/`no`; `options` = `{name: p}` or `[(name, p)]` |
 | `decided(kind, question, result, p, ..., latency_ms=0, important=False, scope=None, threshold=None)` / `Agent.decided(...)` | `decision <kind>` (backdated) | one finished decision in one call, returned (pass it as a wait's `because=`); `important=True` sets `agentglow.decision.important`, `scope="global"` sets `agentglow.decision.scope`, `threshold` sets `agentglow.decision.threshold` (all also on `decision(...)`) |
@@ -521,8 +533,8 @@ run, LLM turn, tool call or request of its own).
 | progress | `agentglow.progress(i, n)` or `progress(0.4, eta_s=None, label=None)` | signal `progress`: `.progress.frac`, `.i`, `.n`, `.eta_ms`, `.label` | `progress` with `frac` or `i`+`n`, `eta_ms`, `label` | `progress` (`frac` 0..1, `eta_ms` given or estimated from the rate since the first progress) |
 | capacity | `agentglow.capacity(name, used, max)` | signal `capacity`: `.capacity.name`, `.used`, `.max` | `capacity` with `name`, `used`, `max` | `capacity` gauge (max one per owner+name per 250 ms unless it hits max / leaves it) |
 | rejected | `agentglow.rejected(reason, retry_after=None, status=None)` | signal `rejected`: `.rejected.reason`, `.retry_after_ms`, `.status`; also sets `agentglow.rejected`=reason on the current span | `rejected` with `reason`, `retry_after_ms`, `status` | `rejected` (amber, NOT an error); the enclosing request's `request` gets `rejected: true`, `error: false` even for a 503 |
-| pool | `p = agentglow.pool(name, size, kind="model"\|"gpu"\|"worker", devices=None)`; `async with p.lease() as inst:` / `with p.lease():` (`inst.device`, `inst.index`; it really limits concurrency to `size`) | span `lease <pool>`, started when acquired, backdated to the request: `agentglow.pool`=name, `.pool.kind`, `.size`, `.device`, `.instance`, `.wait_ms`, `.waiting` | `lease` with `pool`, `kind`, `size`, `device`, `wait_ms`, `duration_ms` | resource `<pool>` (kind = pool kind) under the `backend` group: `mcp` call / result (`tool` `lease`), `resource_stats` |
-| inference | `with agentglow.inference(model, device=None, units=None, unit="audio_s") as inf:` (`inf.units = 12.5` before the end) | span `inference <model>`: `agentglow.inference.model`, `.device`, `.units`, `.unit` | `inference` with `model`, `device`, `units`, `unit`, `duration_ms` | resource `<model>` (kind `model`): `mcp` call / result (`tool` `infer`, + `units`, `unit`), `resource_stats` with speed |
+| pool | `p = agentglow.pool(name, size, kind="model"\|"gpu"\|"worker", devices=None, group=None)`; `async with p.lease() as inst:` / `with p.lease():` (`inst.device`, `inst.index`; it really limits concurrency to `size`) | span `lease <pool>`, started when acquired, backdated to the request: `agentglow.pool`=name, `.pool.kind`, `.size`, `.device`, `.instance`, `.wait_ms`, `.waiting`, `agentglow.resource.group` | `lease` with `pool`, `kind`, `size`, `device`, `wait_ms`, `duration_ms`, `group` | resource `<pool>` (kind = pool kind) under its resource group (default `backend`, see below): `mcp` call / result (`tool` `lease`), `resource_stats` |
+| inference | `with agentglow.inference(model, device=None, units=None, unit="audio_s", group=None) as inf:` (`inf.units = 12.5` before the end) | span `inference <model>`: `agentglow.inference.model`, `.device`, `.units`, `.unit`, `agentglow.resource.group` | `inference` with `model`, `device`, `units`, `unit`, `duration_ms`, `group` | resource `<model>` (kind `model`): `mcp` call / result (`tool` `infer`, + `units`, `unit`), `resource_stats` with speed |
 | job | `agentglow.job(id, kind="job", state="queued")` (a point state) or `with agentglow.job(id, kind=..., attempt=n, max_attempts=None) as j:` (running; end: done, an exception: `retrying` while `attempt < max_attempts`, `dead` at the last attempt, else `failed`; `j.state("retrying")` overrides) | span `job <kind>` or signal `job`: `agentglow.job.id`, `.job.kind`, `.job.state`, `.job.attempt` | `job` with `job_id`, `kind`, `state`, `attempt` | ONE node per job id (scope + id) in the services run (at most `AGENTGLOW_JOB_MAX_NODES`, 12, live nodes; more are tracked, not drawn): `spawn` (subagent of the service that first reports it, `job:<id>`) + `job` events from every process; a different service reporting it = comet from that service to the job; `done` = exit done, `dead` = exit failed, `failed` exits after 15 s without a retry, any job after 5 min without news; spans inside the job span (stages, progress, leases) belong to it |
 | link / complete | `agentglow.link(external_id, label=None)` inside the outbound call; later `agentglow.complete(external_id, status="ok")` in the webhook | signals `link` (`.link.id`, `.link.label`) / `complete` (`.complete.id`, `.complete.status`) | `link` / `complete` with `ref`, `label` / `status` | `deferred` `open` on the caller; on complete `deferred` `done` (`from_id` = completer, `wait_ms`) + a `message` comet completer -> caller (`callback <status>`); open links are forgotten after 1 h |
 | fallback | `agentglow.fallback(from_="inline", to="queue", reason="timeout", job=None)` | signal `fallback`: `.fallback.from`, `.to`, `.reason`, `.job` | `fallback` with `from`, `to`, `reason`, `job_id` | `fallback` (`to_id` = the job node when `job` is given, else a service named `to`, if known): dashed edge |
@@ -531,7 +543,7 @@ run, LLM turn, tool call or request of its own).
 | lifecycle | `agentglow.lifecycle(state)`: loading \| warming \| ready \| degraded \| draining \| restarting \| fatal | signal `lifecycle`: `.lifecycle.state` | `lifecycle` with `state` | `lifecycle` on the service of the span (never a session / job inside it; latest state replayed to new viewers) |
 | metric | `agentglow.metric(name, value, unit=None)` | signal `metric`: `.metric.name`, `.value`, `.unit` | `metric` with `name`, `value`, `unit` | `metric` (max one per owner+name per 500 ms) |
 | event | `agentglow.event(kind, label=None, **fields)` (numbers / bools / short strings; `order(...)` keeps its own shape) | span `event <kind>`: `agentglow.event`=kind, `.event.label`, `.event.<field>` | `event` with `kind`, `label`, other fields | `event` (`fields` max 8) |
-| cache | `agentglow.cache(name, hit=True)` | signal `cache`: `.cache.name`, `.hit` | `cache` with `name`, `hit` | resource `<name>` (kind `cache`): `mcp` pulse (max one per owner+cache per 250 ms), hit rate in `resource_stats` |
+| cache | `agentglow.cache(name, hit=True, group=None)` | signal `cache`: `.cache.name`, `.hit`, `.group` | `cache` with `name`, `hit`, `group` | resource `<name>` (kind `cache`): `mcp` pulse (max one per owner+cache per 250 ms), hit rate in `resource_stats` |
 
 Work started later in a detached task or thread keeps its spawning request as the owner when that context is passed
 explicitly: `ctx = agentglow.capture()` in the request, then `session(..., parent=ctx)` / `job(..., parent=ctx)`.
@@ -551,10 +563,20 @@ backlog        {run_id, id, topic, depth, pending?, lag_ms?, from_id?, to_id?}
 lifecycle      {run_id, id, state}
 metric         {run_id, id, name, value, unit?}
 event          {run_id, id, kind, label?, fields?: {k: num|bool|str}}
-resource_stats {run_id, server: "backend", resource, kind, window_ms, calls, p50_ms, size?, busy?, waiting?, wait_p50_ms?,
+resource_stats {run_id, server: "backend" | <group>, resource, kind, window_ms, calls, p50_ms, size?, busy?, waiting?, wait_p50_ms?,
                 devices?: [{device, busy, size}], hits?, misses?, units?, unit?, rtf?}   (one per active resource per tick)
 ```
 New resource kinds: `model`, `gpu`, `worker`, `cache` (themes draw them with the closest existing shape).
+
+**Resource groups.** Pools, models and caches join the synthetic group `backend` (drawn as "MCP · backend") unless a
+group is named: the `group=` argument of `pool()` / `inference()` / `cache()`, else the process default
+`agentglow.resource_group(name)` / `agentglow.watch(..., resource_group=name)` / env `AGENTGLOW_RESOURCE_GROUP`. It
+travels as `agentglow.resource.group` (lease / inference spans), `agentglow.cache.group` (cache signal) or flat field
+`group` (max 40 chars); the server uses it as the `server` of the `mcp_register`, `mcp` and `resource_stats` events.
+A named group's `mcp_register` (and its `/live/topology` entry) carries `kind`: `"model"` while it holds only models,
+`"mcp"` once anything else joins; the UI labels a `model` group "ML · <name>" (e.g. `inference("lightgbm-payment-integrity",
+group="payment-integrity scorer")` -> "ML · payment-integrity scorer"), anything else "MCP · <name>". The default
+`backend` group never carries `kind` (output unchanged).
 
 **FastAPI WebSockets.** `with agentglow.session_ws(websocket, name=None, kind="ws"):` around a WebSocket handler (name =
 the route path) is a session: `client_disconnect` / `server_close` reason from the close code, frames counted as
@@ -647,7 +669,7 @@ spans carry none of these keys and are unchanged (regression goldens).
 
 ## World events (backend → frontend)
 Source of truth: `WorldEvent` in `frontend/src/scenes/shared/world.ts`:
-`run, step, spawn(subagent?), exit, agent, llm, message, tool, graph, mcp_register, mcp, final, skill, chat, decision,
+`run, step, spawn(subagent?), exit, agent, llm, message, tool, graph, graph_nodes (replay only), mcp_register, mcp, final, skill, chat, decision,
 decision_stats, order, request, service_stats, drives, session, stage, progress, capacity, rejected, job, deferred, fallback, gate,
 backlog, lifecycle, metric, event, resource_stats` (the last 14: see "Generic primitives"). `ts` = epoch ms.
 `request` = `{"type": "request", "run_id", "id": <service agent id>, "service", "name", "kind": "http"|"rpc"|"message"|"event",
@@ -684,6 +706,34 @@ run's agents and show `idle · 4m` on its label. `completed` / `failed` may carr
 session closed for silence, below).
 `step` may carry status `waiting` with `reason` (wait label) and optional `until` (epoch ms); `agent` status `waiting` may
 carry the same `reason` / `until` (see "Waits and long-running runs").
+`mcp` result events may carry `"error": true` (the MCP / backend client / lease / inference span ended with error status, an
+HTTP client got a 5xx, or a flat `call` had an error status) and `"status": <int>` (HTTP client calls and flat `call` with
+a numeric `status`: the code only, never the URL). Both are omitted otherwise, so agent-only output is unchanged.
+
+### Resource details
+MCP servers / resource groups are drawn by the shared kit in every theme (`kit/Crystal.tsx`): a faceted crystal labelled
+"MCP · <name>" / "ML · <name>" with each resource as a satellite on its own tilted orbit (name at its kit slot, tethered),
+tinted per theme (`KitScene` `mcpStyle`). Every non-agent icon is clickable in all themes (shared kit `kit/Picks.tsx`): an MCP server / resource group, each of
+its resources (satellites: databases, caches, queues, HTTP hosts, models, pools) and each agent / service -> server
+link used in the last 30 s. Hover = pointer cursor + highlight ring / line; click = the Selected panel shows "Resource
+details"; Esc, "back" or a click on empty space closes it. No new server events: the UI aggregates the `mcp` call /
+result events it already receives (`resinfo.ts`, per server, per `server|resource`, per `agent|server`, since the page
+loaded or the replay began) and reads `resource_stats` / `backlog`:
+- generic: kind icon, name, owner service (top service caller), calls, errors, p50 / p95 latency, rate (calls/s over the
+  last minute), last seen, a 60 s traffic sparkline, top callers (each opens its link), the 25 most recent calls (caller,
+  tool / operation, duration, ok / status / error, time ago);
+- MCP server / group: tools table (calls, p50, p95, errors) and its resources; link: operations on that link, resources
+  reached, last call;
+- database / warehouse / storage: operation mix by verb (first word of the operation: `SELECT`, `INSERT`, `MATCH`) and
+  the slowest operations by p95; cache: hit ratio (`resource_stats` hits / misses, else `hit` / `miss` calls) and command
+  mix; queue / topic: publish vs consume rate, depth / lag / consumer from `backlog`; HTTP host: method and status-class
+  mix (host only); model: units scored, RTF, device, last latency; pool: capacity, in use, waiters, wait p50, devices;
+- service agents: their Selected panel adds a Service section (replicas, handled, errors, p50 / p95, status mix, routes
+  from `service_stats`, backends used); jobs keep their job section (state history, stages, progress + ETA, spawned by).
+Only labels the server already sent through the privacy pipeline appear: operation names, hosts / systems, status codes,
+latencies; never statements, keys, URLs with ids, arguments, results or bodies. Backend service calls are rate-limited to
+one per (agent, resource) per 250 ms on the server, so counts there are a lower bound.
+`?debugpicks` (app URL) publishes the click targets' screen positions as `window.__agentglowPicks` (browser tests).
 
 ## Frontend (`frontend/`, npm `agentglow`)
 - App build: gallery at `/`, `/<theme>`; data source = same origin `/live/stream` (`?source=<url>` override, `?sim=1` simulator, `?sim=hf` high-frequency simulator (30 market agents, ~100 decisions/s, paper orders), `?hud=0` hide HUD, `?run=<id>` one run). Output copied to `backend/agentglow/static/`.

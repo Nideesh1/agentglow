@@ -12,10 +12,13 @@ import { Bloom, EffectComposer, Noise, Vignette } from "@react-three/postprocess
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { GraphLabel3D, Label3D, type Label3DHandle } from "../shared/Label3D";
-import { idleText, isIdle, mcpGlow, STEP_SLOTS, slotLabel, slotStatus, stepChips, TYPE_COLOR, useWorld, world, type AgentType, jobText } from "../shared/world";
-import { KitScene, fit, kit, kitRoleU, ResourceWire, runLocal, useKitGalaxy, type AgentSlotProps, type BackendSlotProps, type GraphSlotProps, type McpServerSlotProps, type RunSlotProps } from "../shared/kit";
-import { FlowEngine, NEB_R, PULSAR_Y, REDUCED } from "./engine";
+import { idleText, isIdle, STEP_SLOTS, slotLabel, slotStatus, stepChips, TYPE_COLOR, useWorld, world, type AgentType, jobText } from "../shared/world";
+import { KitScene, fit, kit, kitRoleU, runLocal, useKitGalaxy, type AgentSlotProps, type GraphSlotProps, type RunSlotProps } from "../shared/kit";
+import { FlowEngine, NEB_R, PULSAR_Y } from "./engine";
 import "./flow.css";
+
+/** the kit MCP crystal in this theme's palette */
+const MCP_STYLE = { tint: "#a5b4fc", tintAmt: 0.2, gain: 0.6, halo: 0.25, lift: PULSAR_Y };
 
 const _v = new THREE.Vector3();
 const STEP_ROLE: AgentType[] = ["planner", "researcher", "writer"];
@@ -59,7 +62,7 @@ function Field() {
       <primitive object={engine.attractors} />
       <primitive object={engine.stepRings} />
       <primitive object={engine.rings} />
-      <primitive object={engine.pulsars} />
+      {/* MCP servers: the kit crystal at PULSAR_Y (engine.pulsars stays undrawn); the jets remain */}
       <primitive object={engine.pulsarBeams} />
       <primitive object={engine.selRing} />
     </group>
@@ -164,65 +167,6 @@ function RunLabel({ run: kr }: RunSlotProps) {
   );
 }
 
-/** McpServer slot: the pulsar is engine-drawn at the kit's server slot; this is its name. */
-function McpLabel({ mcp }: McpServerSlotProps) {
-  const g = useRef<THREE.Group>(null);
-  // beside the pulsar, on its outward side (stacked servers keep their labels apart)
-  const right = mcp.target.x >= 0;
-  useFrame(() => g.current?.position.set(mcp.pos.x + (right ? 0.9 : -0.9), PULSAR_Y, mcp.pos.z));
-  return (
-    <group ref={g}>
-      <Label3D text={`mcp · ${mcp.name}`} anchorX={right ? "left" : "right"} color={mcp.srv.color} size={0.28} pxRange={[8.5, 12]} />
-    </group>
-  );
-}
-
-const BACKEND_GEO = new THREE.IcosahedronGeometry(0.34, 0);
-const BACKEND_EDGES = new THREE.EdgesGeometry(BACKEND_GEO);
-
-/** Backend slot: a small spinning star behind its pulsar, fed by a swaying light stream from the pulsar. */
-function BackendStar({ mcp, backend }: BackendSlotProps) {
-  const res = backend.res;
-  const g = useRef<THREE.Group>(null);
-  const label = useRef<Label3DHandle>(null);
-  const col = useMemo(() => new THREE.Color(mcp.srv.color), [mcp.srv.color]);
-  const m = useMemo(
-    () => ({
-      fill: new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
-      line: new THREE.LineBasicMaterial({ color: col, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
-    }),
-    [col],
-  );
-  useFrame(({ clock }, dt) => {
-    const o = g.current;
-    if (!o) return;
-    o.position.set(backend.pos.x, PULSAR_Y, backend.pos.z);
-    const now = performance.now();
-    const busy = res.inflight > 0;
-    const act = mcpGlow(res.activeAt, now, 2.5);
-    const pulse = busy ? 0.5 + 0.5 * Math.sin(clock.elapsedTime * 9) : 0;
-    o.rotation.y += dt * (0.4 + (busy ? 3 : 0) + act) * (REDUCED ? 0.3 : 1);
-    o.scale.setScalar(1 + act * 0.35 + pulse * 0.15);
-    m.fill.color.copy(col).multiplyScalar(0.5 + act * 1.6 + pulse);
-    m.line.color.copy(col).multiplyScalar(1.2 + act * 2.4 + pulse * 1.5);
-    label.current?.setOpacity(busy ? 1 : 0.6 + act * 0.4);
-    label.current?.setEmphasis(busy);
-  });
-  const right = backend.target.x >= 0;
-  return (
-    <>
-      <ResourceWire mcp={mcp} backend={backend} y={PULSAR_Y} lift={0.5} wave={0.12} gain={1.3} />
-      <group ref={g}>
-        <mesh geometry={BACKEND_GEO} material={m.fill} />
-        <lineSegments geometry={BACKEND_EDGES} material={m.line} />
-        <group position={[right ? 0.6 : -0.6, 0, 0]}>
-          <Label3D ref={label} text={res.name} anchorX={right ? "left" : "right"} color={mcp.srv.color} size={0.24} opacity={0.6} pxRange={[7.5, 11]} />
-        </group>
-      </group>
-    </>
-  );
-}
-
 /** GraphResource slot: the FalkorDB nebula current, in the side graph's local frame (radius NEB_R). */
 function Nebula(_: GraphSlotProps) {
   const engine = getEngine();
@@ -314,8 +258,7 @@ export default function Scene() {
       peripheryGap={4.5}
       Agent={Eddy}
       RunMarker={RunLabel}
-      McpServer={McpLabel}
-      Backend={BackendStar}
+      mcpStyle={MCP_STYLE}
       GraphResource={Nebula}
       cluster={{ radius: 1.7, variant: "swarm", pointSize: 1.1 }}
       clusterOffset={[0, 1.8, 0]}

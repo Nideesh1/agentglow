@@ -43,7 +43,7 @@ backend-services.md):
 Labels you can add to your own spans (plain OTel attributes): `agentglow.run.topic` (run title), `agentglow.final`
 (final answer), `agentglow.agent` (mark a span as an agent, value = name), `agentglow.run.id`, `agentglow.step`,
 `agentglow.mcp.server` / `.resource` / `.resource_kind` (`db`, `warehouse`, `spark`, `api`, `storage`, `queue`),
-`db.system` + `agentglow.graph.nodes` + `agentglow.db.op` (graph read / write).
+`db.system` + `agentglow.graph.nodes` + `agentglow.db.op` (graph read / write); optional `agentglow.graph.kinds`. Touched nodes outside the served graph sample are added to the viewer's graph and glow.
 
 Announce an MCP server and its backends before the first call:
 `agentglow.register_mcp("analytics", {"snowflake": "warehouse", "spark": "spark"})` (returns False if the server is down).
@@ -76,7 +76,7 @@ asyncio tasks created inside inherit it.
 | `agentglow.llm(model="llm", tokens_in=None, tokens_out=None)` | an LLM turn as a block; `.set_tokens(i, o)` |
 | `agentglow.tool(name, args=None)` | a tool call; `.result(value)` |
 | `agentglow.mcp(server, tool=None, resource=None, kind="api", args=None)` | an MCP / backend call (kind `db`, `warehouse`, `spark`, `api`, `storage`, `queue`) |
-| `agentglow.graph(op="read", nodes=None, system="graph")` | a knowledge-graph / DB read or write |
+| `agentglow.graph(op="read", nodes=None, system="graph", kinds=None)` | a knowledge-graph / DB read or write; `kinds` (parallel to `nodes`) colors nodes the viewer adds outside its graph sample |
 | `agentglow.skill(name)` | a skill ring on the current agent while the block runs |
 | `agentglow.decision(kind, question, result=None, p=None, options=None, provider="llm", purpose=None, target=None, important=False, scope=None)` | a fast decision block; `.record(result, p=None, options=None, target=None)`. kind `choice` / `score` / `noul`; purpose `route` / `guard` / `check`; `scope="global"` = desk-wide halt |
 | `agentglow.decided(kind, question, result, p=None, ..., latency_ms=0)` | one finished decision |

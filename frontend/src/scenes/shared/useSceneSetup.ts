@@ -28,10 +28,10 @@ import { useSceneConfig, type SceneConfig } from "./config";
 import { runWorldSimulator } from "./sim";
 import { runHfSimulator } from "./simHf";
 import { createSseParser } from "./sse";
+import { mergeGalaxy, onGraphDyn, setGraphSample, type Galaxy, type GalaxyNode } from "./graphDyn";
 import { apply, hash01, resetWorld, setGraphLabel, setMode, setUnauthorized, world, type WorldEvent } from "./world";
 
-export type GalaxyNode = { id: string; name: string; kind: string };
-export type Galaxy = { nodes: GalaxyNode[]; links: { source: string; target: string }[] };
+export type { Galaxy, GalaxyNode };
 
 const KINDS = ["Customer", "Account", "Incident", "Ticket", "Product", "Region", "Metric", "Team"];
 const WEIGHTS = [0.24, 0.24, 0.22, 0.12, 0.06, 0.03, 0.05, 0.04];
@@ -161,8 +161,13 @@ type Conn = {
   refs: number;
   stop?: () => void;
   dead: boolean;
-  /** what scenes draw (EMPTY until the session has a graph) */
+  /** what scenes draw (EMPTY until the session has a graph): `base` + the dynamic nodes when a sample is drawn */
   galaxy: Galaxy;
+  /** the served / simulated sample (EMPTY: none; the event-grown galaxy is drawn instead) */
+  base: Galaxy;
+  dynTimer: number;
+  dynAt: number;
+  unDyn?: () => void;
   /** true once /live/graph served a sample (then event names no longer reshape the galaxy) */
   served: boolean;
   events: EventGalaxy;
@@ -279,13 +284,39 @@ async function probeRun(source: string, auth: Auth, h: Record<string, unknown>):
   }
 }
 
+/** Use `g` as the drawn sample: dynamic nodes (graphDyn.ts) are merged into it from now on. */
+function setSample(c: Conn, g: Galaxy) {
+  c.base = g;
+  setGraphSample(g.nodes.length ? g : null);
+  c.galaxy = g.nodes.length ? mergeGalaxy(g) : g;
+}
+
+/** Dynamic nodes changed: re-merge (leading edge, then at most every DYN_MS) so a new node exists before its flare fades. */
+const DYN_MS = 200;
+function watchDyn(c: Conn) {
+  const publish = () => {
+    c.dynTimer = 0;
+    if (c.dead || !c.base.nodes.length) return;
+    c.dynAt = performance.now();
+    c.galaxy = mergeGalaxy(c.base);
+    emit();
+  };
+  c.unDyn = onGraphDyn(() => {
+    if (c.dead || !c.base.nodes.length || c.dynTimer) return;
+    const wait = DYN_MS - (performance.now() - c.dynAt);
+    if (wait <= 0) publish();
+    else c.dynTimer = window.setTimeout(publish, wait);
+  });
+}
+
 function start(c: Conn, sim: boolean | "hf") {
+  watchDyn(c);
   const useSim = () => {
     if (c.dead) return;
     setMode("sim");
     if (sim === "hf") {
       world.hasGraph = false; // the market desks use no knowledge graph (setMode("sim") turned it on)
-      c.galaxy = EMPTY;
+      setSample(c, EMPTY);
       c.stop = runHfSimulator();
       emit();
       return;
@@ -322,7 +353,7 @@ function start(c: Conn, sim: boolean | "hf") {
     };
     if (h === UNAUTHORIZED) return denied(); // no simulator fallback: say so in the HUD
     if (!h) {
-      c.galaxy = fakeGalaxy();
+      setSample(c, fakeGalaxy());
       return useSim();
     }
     setMode("live");
@@ -337,8 +368,8 @@ function start(c: Conn, sim: boolean | "hf") {
       .then((r) => (r.status === 401 || r.status === 403 ? (denied(), null) : r.ok ? r.json() : null))
       .then((g: Galaxy | null) => {
         if (!c.dead && g?.nodes?.length) {
-          c.galaxy = g;
           c.served = true;
+          setSample(c, g);
           // the server only serves /live/graph when a real graph DB is configured (FalkorDB provider).
           // Stored, not shown: world.hasGraph flips only when an agent touches the graph (a `graph` event).
           setGraphLabel((g as Galaxy & { label?: string }).label ?? "FalkorDB · knowledge graph");
@@ -351,6 +382,7 @@ function start(c: Conn, sim: boolean | "hf") {
         const ev = JSON.parse(data) as WorldEvent;
         const had = world.hasGraph;
         apply(ev);
+        if (ev.type === "graph_nodes" && Array.isArray(ev.nodes)) grow(ev.nodes.map((n) => n.name));
         if (ev.type === "graph" && Array.isArray(ev.nodes)) {
           grow(ev.nodes);
           // first use of the graph: publish what we have (the served sample, or the grown galaxy)
@@ -367,6 +399,8 @@ function teardown(c: Conn) {
   c.dead = true;
   c.stop?.();
   if (c.growTimer) window.clearTimeout(c.growTimer);
+  if (c.dynTimer) window.clearTimeout(c.dynTimer);
+  c.unDyn?.();
   if (conn === c) {
     conn = null;
     setRunAvailable(false);
@@ -387,7 +421,8 @@ function acquire(source: string, sim: boolean | "hf", auth: Auth): Conn {
   }
   // a fresh connection (first one, or a different source / scope / run / token) starts from an empty world
   resetWorld();
-  const c: Conn = { key, source, auth, refs: 1, dead: false, galaxy: sim ? fakeGalaxy() : EMPTY, served: false, events: new EventGalaxy(), growTimer: 0 };
+  const c: Conn = { key, source, auth, refs: 1, dead: false, galaxy: EMPTY, base: EMPTY, dynTimer: 0, dynAt: 0, served: false, events: new EventGalaxy(), growTimer: 0 };
+  if (sim) setSample(c, fakeGalaxy());
   conn = c;
   start(c, sim);
   return c;

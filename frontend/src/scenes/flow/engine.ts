@@ -16,6 +16,7 @@
  */
 import * as THREE from "three";
 import type { Galaxy } from "../shared/useSceneSetup";
+import { DYN_MAX, graphView } from "../shared/graphDyn";
 import { mcpGlow,
   KIND_COLOR,
   slotStatus,
@@ -50,8 +51,10 @@ const TETHER_SEGS = 18;
 const TETHER_MAX = 16;
 export const MCP_SLOTS = 8;
 const TAU = Math.PI * 2;
-/** FalkorDB is shown as a representative sample: at most this many anchor nodes. */
-const NODE_MAX = 200;
+/** FalkorDB is shown as a representative sample: at most this many sampled anchor nodes... */
+const SAMPLE_MAX = 200;
+/** ...plus the dynamic nodes events touched outside the sample (graphDyn.ts) */
+const NODE_MAX = SAMPLE_MAX + DYN_MAX;
 
 /** natural radius of the nebula (side graph local frame) */
 export const NEB_R = 5.4;
@@ -347,7 +350,8 @@ export class FlowEngine {
    * Swap in a new graph sample (the session's graph grows while it runs). Anchors are laid out per node id (stable:
    * a node never moves when others arrive), new anchors take over a share of the nebula particles. No reset.
    */
-  setGalaxy(galaxy: Galaxy) {
+  setGalaxy(full: Galaxy) {
+    const galaxy = graphView(full, SAMPLE_MAX);
     const n = Math.min(NODE_MAX, galaxy.nodes.length);
     const old = this.nAnchors;
     this.nAnchors = n;
@@ -869,7 +873,7 @@ export class FlowEngine {
           const inst = world.instances.get(f.instance);
           this.emitRing(_v.x, _v.y, _v.z, inst ? TYPE_RGB[inst.type] : WHITE, 1.1 * gs, 0.7, now, 1.6);
         }
-        this.lastFlare = { name: f.node, op: f.op, at: now, idx };
+        if (!f.area) this.lastFlare = { name: f.node, op: f.op, at: now, idx };
       }
       if (b > this.burst[idx]) {
         this.burst[idx] = b;
@@ -1353,7 +1357,8 @@ export class FlowEngine {
       this.setInst(this.pulsars, m, _v.x, _v.y, _v.z, 1 + act * 0.6 + busy * 0.2 * pulse, _c2, 0, this.mcpSpin[m], 0);
       _c2.copy(_c).multiplyScalar(0.25 + busy * 0.9 * pulse + act * 0.8);
       this.setInst(this.pulsarBeams, m, _v.x, _v.y, _v.z, 1 + busy * 0.3, _c2, 0.5 * Math.sin(this.mcpSpin[m] * 0.5), this.mcpSpin[m], 0.35 + 0.3 * Math.cos(this.mcpSpin[m]));
-      glow(gi, _v.x, _v.y, _v.z, _c, 0.6 + busy * 0.8 * pulse + act * 1.6, 9 + act * 12 + busy * 4);
+      // the kit crystal is drawn here now (pulsars stay undrawn): only a soft field glow + the jets remain
+      glow(gi, _v.x, _v.y, _v.z, _c, 0.2 + busy * 0.25 * pulse + act * 0.35, 5 + act * 3 + busy * 2);
     }
 
     // ---- shock rings (births, exits, graph flares)

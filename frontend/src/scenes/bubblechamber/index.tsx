@@ -16,10 +16,13 @@ import * as THREE from "three";
 import { KitScene, kit } from "../shared/kit";
 import { ARCHIVE_R, Archive } from "./Archive";
 import { Bubbles, Chamber } from "./Chamber";
-import { Cell, McpTracks, Plate } from "./Detectors";
+import { McpTracks } from "./Detectors";
 import { agentDepth, tank, vertices } from "./fx";
 import { EventVertex, Finals } from "./Runs";
 import { AgentDepth, Lineage, Particle } from "./Tracks";
+
+/** the kit MCP crystal in this theme's palette */
+const MCP_STYLE = { tint: "#7dd3fc", tintAmt: 0.3, gain: 0.6, halo: 0.4 };
 
 // full 360 orbit round the vertical axis (the back-lit liquid always faces the camera, the tank shows its depth)
 const CONTROLS = {
@@ -61,8 +64,7 @@ export default function Scene() {
       Background={<Chamber />}
       Agent={Particle}
       RunMarker={EventVertex}
-      McpServer={Plate}
-      Backend={Cell}
+      mcpStyle={MCP_STYLE}
       GraphResource={Archive}
       cluster={{ radius: 1.4, variant: "swarm", glowGain: 0.9 }}
       PostFX={

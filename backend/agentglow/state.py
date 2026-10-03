@@ -48,6 +48,7 @@ class Hub:
         # replay buffer (events); AGENTGLOW_BUFFER overrides the default (small values exercise the snapshot path)
         self.buffer: deque[dict] = deque(maxlen=buffer or int(os.environ.get("AGENTGLOW_BUFFER") or 5000))
         self.live = LiveState()  # open runs' state-carrying events, replayed once they left the buffer
+        self.graph = GraphTouched()  # names touched by `graph` events, replayed as one `graph_nodes` (dynamic nodes)
         self.topology: dict[str, dict] = {}  # server -> merged mcp_register event
         self.subs: set[Sub] = set()
         # SSE event id = "<epoch>-<seq>": a reconnecting viewer's Last-Event-ID resumes after what it already applied
@@ -176,6 +177,8 @@ class Hub:
                 ev["seq"] = self.seq
                 self.buffer.append(ev)
                 self.live.note(ev)
+                if ev.get("type") == "graph":
+                    self.graph.note(ev)
             for sub in list(self.subs):
                 if sub.filter.match(ev, self.scope_of):
                     self._put(sub, ev)
@@ -210,6 +213,8 @@ class Hub:
             names = {r["name"] for r in cur["resources"]}
             cur["resources"] += [r for r in ev.get("resources", []) if r.get("name") not in names]
             cur["ts"] = ev.get("ts", cur["ts"])
+            if ev.get("kind"):
+                cur["kind"] = ev["kind"]
         else:
             self.topology[ev["server"]] = {**ev, "resources": list(ev.get("resources", []))}
         return ev
@@ -236,7 +241,10 @@ class Hub:
                     s = e.get("seq", 0)
                     if after < s < first and (e.get("type") == "run" or e.get("run_id") not in done) and f.match(e, self.scope_of):
                         snap[s] = e
-        return list(self.topology.values()) + [snap[s] for s in sorted(snap)] + \
+        # a fresh viewer (not a resume) also gets the graph nodes touched so far, even by runs that ended: the viewer
+        # draws them as dynamic nodes next to its graph sample (graphDyn.ts). Not a `graph` event: nothing flares.
+        touched = [] if after else self.graph.event(f, self.scope_of, self.clock())
+        return list(self.topology.values()) + touched + [snap[s] for s in sorted(snap)] + \
             [e for e in self.buffer if e.get("seq", 0) > after and e.get("run_id") not in done and f.match(e, self.scope_of)]
 
     def resume_after(self, last_event_id: str) -> int:
@@ -415,3 +423,45 @@ class LiveState:
         evs += [e for r in self.runs.values() for e in r.steps.values()]
         evs += [e for a in self.agents.values() for e in (a.spawn, *a.state.values())]
         return evs
+
+
+# ---------------------------------------------------------------------- graph nodes touched (dynamic graph nodes)
+GRAPH_TOUCHED = int(os.environ.get("AGENTGLOW_GRAPH_TOUCHED", "600"))  # names kept (LRU), sample names included
+GRAPH_PEERS = 8
+
+
+class GraphTouched:
+    """LRU of the node names `graph` events touched (name, latest known kind, a few co-touched peers, the last run
+    that touched it for scope filtering). Hub.replay() sends them to a fresh viewer as ONE `graph_nodes` event, oldest
+    first, so a refreshed viewer rebuilds the dynamic nodes it draws outside its graph sample (docs/SPEC.md)."""
+
+    def __init__(self, cap: int = GRAPH_TOUCHED) -> None:
+        self.cap = cap
+        self.nodes: dict[str, dict] = {}  # lowercased name -> entry (insertion ordered: oldest first)
+
+    def note(self, ev: dict) -> None:
+        names = [str(n).strip()[:200] for n in (ev.get("nodes") or [])[:50]]
+        kinds = ev.get("kinds") or []
+        peers = [n for n in names if n][:GRAPH_PEERS]
+        for i, name in enumerate(names):
+            if not name:
+                continue
+            key = name.lower()
+            cur = self.nodes.pop(key, None) or {"name": name}
+            kind = kinds[i] if i < len(kinds) else None
+            if kind:
+                cur["kind"] = str(kind)[:40]
+            mine = [p for p in peers if p.lower() != key]
+            if mine:
+                old = [p for p in cur.get("peers", []) if p not in mine]
+                cur["peers"] = (mine + old)[:GRAPH_PEERS]
+            cur["run_id"] = ev.get("run_id")
+            self.nodes[key] = cur
+        while len(self.nodes) > self.cap:
+            self.nodes.pop(next(iter(self.nodes)))
+
+    def event(self, f: Filter, scope_of, now_ms: int) -> list[dict]:
+        """[] or [one `graph_nodes` event] with the entries this viewer's filter allows."""
+        nodes = [{k: v for k, v in e.items() if k != "run_id"} for e in self.nodes.values()
+                 if f.match({"run_id": e.get("run_id")}, scope_of)]
+        return [{"type": "graph_nodes", "nodes": nodes, "ts": now_ms}] if nodes else []

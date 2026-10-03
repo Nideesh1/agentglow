@@ -43,7 +43,11 @@ as `preset`; do not add per-theme placement code outside it.
 4. **Clusters:** delete the theme's `Clusters.tsx` and its `place()`; pass `cluster={{ radius, variant, color }}`
    (+ `clusterOffset`); `color` may be `(lane) => string`. Only for a non-ClusterBall look use the `Cluster` slot.
    The kit spaces balls by their badge size.
-5. **MCP:** `McpServer` slot (`{ mcp }`) and `Backend` slot (`{ mcp, backend }`). Position from `mcp.pos` /
+5. **MCP:** by default the kit draws every MCP server as a faceted crystal with its backends as satellites on
+   tilted orbits (`Crystal.tsx`); a theme tints it with `mcpStyle` (`tint` + `tintAmt`, `gain`, `halo`, `lift` above
+   the stage (number or per server slot), `size`, `emit` for sparks) and gets the Resource details click targets
+   (`Picks.tsx`) for free. `satellitePos(server, res)` = the moving satellite (trails can end on it). A theme may still
+   pass its own `McpServer` slot (`{ mcp }`) and `Backend` slot (`{ mcp, backend }`). Position from `mcp.pos` /
    `backend.pos` EVERY FRAME (they ease when the periphery re-lays out); `mcp.out` = outward direction.
    Delete `satPos`/`backendPos` and the per-server `res.map(<Backend>)`.
    Tethers/packets: `agentLive(instanceId)` and `serverPos(name)` / `backendPos(server, res)`; skip when undefined.
@@ -61,6 +65,10 @@ as `preset`; do not add per-theme placement code outside it.
    - extras outside the slot that need the galaxy: `useKitGalaxy()`.
    - stage-sized beams/sparks drawn inside the slot: wrap them in `<GraphStageSpace>` (undoes the graph transform).
    - which side the graph sits on: `kit.graph.out` (unit outward direction), e.g. captions on the far side.
+   - dynamic nodes (`../graphDyn.ts`): the galaxy carries the served sample plus nodes events touched outside it
+     (`dyn: true`, LRU-capped at DYN_MAX). Cap with `graphView(galaxy, maxSample)` (never `slice`, it would drop
+     them), lay out the first `ns` sampled nodes as before and the rest with `placeDynamic()` / `dynDir()` (hashed:
+     stable for every viewer). Name labels skip `f.area` flares (lit for an event that named no node).
 7. **Backdrops sized to the content:** read `kit.core.hw / hh / r` (eased half extents of agents + clusters) in
    useFrame. Things that must stay visible but are theme-specific (labels at a line's end,
    a backdrop rim) go in the `extents` prop: `visit(stagePoint, radius)`.

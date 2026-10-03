@@ -33,6 +33,14 @@ const NODES = [
   ["APAC", "Onboarding Time", "Customer Success"],
 ];
 
+/** Entities outside the drawn sample: they appear as dynamic graph nodes (graphDyn.ts) when touched. Some carry a
+ * kind (colored by it), some none ("touched"); a few reuse sample words so they bud off a similar sample node. */
+const NOVEL: [string, string | null][] = [["Vendor", "Vendor"], ["Contract", "Contract"], ["Invoice", null], ["Device", "Device"], ["Shipment", null], ["Incident", "Incident"], ["Customer", "Customer"]];
+function novel(): [string, string | null] {
+  const [w, kind] = NOVEL[Math.floor(Math.random() * NOVEL.length)];
+  return [`${w} ${w === "Incident" ? "#" : ""}${5000 + Math.floor(Math.random() * 600)}`, kind];
+}
+
 /** Backends behind each MCP server (rendered as nodes wired to the server). */
 const MCP_BACKENDS: Record<string, [string, "db" | "warehouse" | "spark" | "api" | "storage" | "queue"][]> = {
   analytics: [["Metrics API", "api"], ["Postgres", "db"]],
@@ -165,6 +173,15 @@ function scheduleRun(at: Sched) {
     put(lat, () => ({ type: "mcp", run_id: run, id, server, tool, phase: "result", latency_ms: lat, resource, resource_kind, ts: ts() }));
     if (Math.random() < 0.35) put(300, () => ({ ...guard(pick(["rollback_deploy", "delete_records", "drop_table"]), true), run_id: run, id, ts: ts() }));
     if (Math.random() < 0.7) put(500, () => ({ type: "graph", run_id: run, id, op: "read", nodes: pick(NODES), ts: ts() }));
+    // big graphs: most touched entities are not in the drawn sample (they appear as dynamic nodes, then glow)
+    if (Math.random() < 0.65)
+      put(350, () => {
+        const [a, ka] = novel();
+        const [b, kb] = novel();
+        return { type: "graph", run_id: run, id, op: Math.random() < 0.3 ? "write" : "read", nodes: [a, b, pick(NODES)[0]], kinds: [ka, kb, null], ts: ts() };
+      });
+    // a hit that names no node: a hashed area of the graph glows briefly
+    if (Math.random() < 0.15) put(250, () => ({ type: "graph", run_id: run, id, op: "write", nodes: [], ts: ts() }));
     if (sk) put(300, () => ({ type: "skill", run_id: run, id, name: sk, status: "end", ts: ts() }));
     put(800 + Math.random() * 1200, () => ({ type: "message", run_id: run, from_id: id, to_id: researcher, text: `Found ${2 + Math.floor(Math.random() * 6)} linked records`, ts: ts() }));
     put(200, () => ({ type: "exit", run_id: run, id, status: "done", ts: ts() }));
