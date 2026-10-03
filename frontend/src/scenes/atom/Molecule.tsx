@@ -8,7 +8,8 @@ import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { GraphLabel3D, Label3D, type Label3DHandle } from "../shared/Label3D";
-import { nodeIndex, type Galaxy } from "../shared/useSceneSetup";
+import { nodeIndex } from "../shared/useSceneSetup";
+import { graphView, placeDynamic } from "../shared/graphDyn";
 import { KIND_COLOR, world } from "../shared/world";
 import { agentLive, kit, stageToGraph, type GraphSlotProps } from "../shared/kit";
 import { ArrowPool, CurvePool, ICE, MOL_R, PINK, ROSE, TYPE_C, WHITE, addScaled, bezier, glowSprite, lineMat, reduced } from "./fx";
@@ -58,11 +59,8 @@ const waveMat = () =>
 const WAVE_GEO = new THREE.SphereGeometry(1, 48, 32);
 
 export function Molecule({ galaxy: full }: GraphSlotProps) {
-  const galaxy = useMemo<Galaxy>(() => {
-    const nodes = full.nodes.slice(0, MAX_NODES);
-    const ids = new Set(nodes.map((nd) => nd.id));
-    return { nodes, links: full.links.filter((l) => ids.has(l.source) && ids.has(l.target)) };
-  }, [full]);
+  // the sample (first MAX_NODES) + the dynamic nodes events touched outside it (graphDyn.ts)
+  const galaxy = useMemo(() => graphView(full, MAX_NODES), [full]);
   const n = galaxy.nodes.length;
 
   const data = useMemo(() => {
@@ -70,14 +68,17 @@ export function Molecule({ galaxy: full }: GraphSlotProps) {
     const ga = Math.PI * (3 - Math.sqrt(5));
     // a sparse molecule (a live graph grows from the nodes touched so far) gets bigger atoms so it reads at its
     // full size from the first read instead of starting as a few specks
-    const atomR = atomSize(n);
-    for (let i = 0; i < n; i++) {
+    const ns = galaxy.ns;
+    const atomR = atomSize(ns || n);
+    for (let i = 0; i < ns; i++) {
       // loose fibonacci ball: index 0 outermost (named entities sit on the surface where they're visible)
-      const r = (MOL_R - atomR) * (0.3 + 0.7 * Math.cbrt(1 - i / n));
-      const y = 1 - (2 * (i + 0.5)) / n;
+      const r = (MOL_R - atomR) * (0.3 + 0.7 * Math.cbrt(1 - i / ns));
+      const y = 1 - (2 * (i + 0.5)) / ns;
       const rr = Math.sqrt(1 - y * y);
       pos.set([Math.cos(i * ga) * rr * r, y * r, Math.sin(i * ga) * rr * r], i * 3);
     }
+    // dynamic nodes bud off their anchor atom (hashed offset: same spot for every viewer)
+    placeDynamic(galaxy, pos, atomR * 3.2);
     const base = galaxy.nodes.map((nd, i) => new THREE.Color(KIND_COLOR[nd.kind] ?? "#94a3b8").lerp(WHITE, 0.08 + ((i * 37) % 10) / 70).multiplyScalar(0.8));
     // bonds: graph links between near atoms + each atom to its nearest neighbour
     const idOf = new Map(galaxy.nodes.map((nd, i) => [nd.id, i]));
@@ -147,7 +148,7 @@ export function Molecule({ galaxy: full }: GraphSlotProps) {
   const tmp = useMemo(() => ({ v: new THREE.Vector3(), mid: new THREE.Vector3(), p: new THREE.Vector3(), c: new THREE.Color(), c2: new THREE.Color(), sp: new THREE.Vector3() }), []);
   const idx = (name: string) => {
     let i = cache.get(name);
-    if (i === undefined) cache.set(name, (i = nodeIndex(full, name) % n));
+    if (i === undefined) cache.set(name, (i = nodeIndex(galaxy, name) % n));
     return i;
   };
 
@@ -249,6 +250,7 @@ export function Molecule({ galaxy: full }: GraphSlotProps) {
     for (let q = world.flares.length - 1; q >= 0 && shown < MAX_NAMES; q--) {
       const f = world.flares[q];
       if (now - f.start > 2200) break;
+      if (f.area) continue;
       let skip = false;
       for (let z = 0; z < shown; z++) if (nameShown.current[z] === f.node) skip = true;
       if (skip) continue;

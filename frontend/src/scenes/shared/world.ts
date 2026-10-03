@@ -16,6 +16,7 @@
  */
 import { useSyncExternalStore } from "react";
 import { clearResInfo, noteMcp, sameSel, type ResSel } from "./resinfo";
+import { areaNames, resetGraphDyn, restoreGraph, touchGraph } from "./graphDyn";
 import { applyPrim, noteRejected, PRIM_NO_LOG, PRIM_QUIET, PRIM_TYPES, tickPrims, type Backlog, type PrimEdge, type PrimState, type PrimWorldEvent, type ResStat } from "./prims";
 export type { PrimState, PrimWorldEvent } from "./prims";
 
@@ -43,7 +44,9 @@ export type WorldEvent =
   // `failed`: a publish that raised (backend services): the comet fizzles out instead of arriving
   | { type: "message"; run_id: string; from_id: string; to_id: string; text: string; ts: number; failed?: boolean }
   | { type: "tool"; run_id: string; id: string; tool: string; args_preview: string; ts: number }
-  | { type: "graph"; run_id: string; id: string; op: "read" | "write"; nodes: string[]; ts: number }
+  | { type: "graph"; run_id: string; id: string; op: "read" | "write"; nodes: string[]; kinds?: (string | null)[]; ts: number }
+  // replay only (first connect): graph nodes touched earlier (oldest first), so a refreshed viewer keeps the dynamic nodes
+  | { type: "graph_nodes"; nodes: { name: string; kind?: string | null; peers?: string[] }[]; run_id?: string; ts?: number }
   | { type: "final"; run_id: string; text: string; ts: number }
   // opt-in (server env AGENTGLOW_CAPTURE_PROMPTS=1, local servers only): one side of a turn on the agent instance
   // `id`, the user's prompt ("user") or the agent's reply ("agent"); secret-redacted and capped by the backend
@@ -262,6 +265,11 @@ export const KIND_COLOR: Record<string, string> = {
   Agency: "#ef4444",
   Topic: "#facc15",
   Committee: "#2dd4bf",
+  // a node touched by an event but not in the served sample (no kind given): see graphDyn.ts
+  touched: "#e879f9",
+  Vendor: "#fb923c",
+  Contract: "#60a5fa",
+  Device: "#4ade80",
 };
 
 // ------------------------------------------------------------------ state
@@ -540,7 +548,8 @@ export const MCP_COLORS: Record<string, string> = {
   analytics: "#06b6d4",
 };
 
-export type Flare = { id: number; run: string; instance: string; node: string; op: "read" | "write"; start: number };
+/** A graph node lit by a read / write. `area`: lit for an event that named no node (no name label). */
+export type Flare = { id: number; run: string; instance: string; node: string; op: "read" | "write"; start: number; area?: boolean };
 
 /** Finished (exit done/failed) - drawn dimmed until its run ends, then faded out with the whole run. */
 /** The label prefix of an MCP-style server: "ML" for a resource group holding only models, else "MCP". */
@@ -780,7 +789,7 @@ export function apply(ev: WorldEvent) {
   if (evRun) evRun.lastEventAt = now;
   if ("run_id" in ev && dismissed.size) undismissOnActivity(ev);
   // stats windows are not log lines (the halo shows them); everything else goes to the event log
-  if (ev.type !== "mcp_register" && ev.type !== "decision_stats" && ev.type !== "service_stats" && ev.type !== "drives" && !PRIM_NO_LOG.has(ev.type) && !(ev.type === "session" && ev.phase === "progress")) {
+  if (ev.type !== "mcp_register" && ev.type !== "graph_nodes" && ev.type !== "decision_stats" && ev.type !== "service_stats" && ev.type !== "drives" && !PRIM_NO_LOG.has(ev.type) && !(ev.type === "session" && ev.phase === "progress")) {
     world.ticker.unshift(ev);
     if (world.ticker.length > 60) world.ticker.length = 60;
   }
@@ -1169,9 +1178,16 @@ export function apply(ev: WorldEvent) {
       world.graphAt = now;
       if (ev.run_id) world.graphRuns.add(ev.run_id);
       world.instances.get(ev.id)?.nodes && ev.nodes.forEach((n) => world.instances.get(ev.id)!.nodes.add(n));
+      // names outside the drawn sample become dynamic graph nodes (graphDyn.ts) so every touched node can glow
+      touchGraph(ev.nodes, ev.kinds);
       for (const n of ev.nodes.slice(0, 20)) world.flares.push({ id: ++seq, run: ev.run_id, instance: ev.id, node: n, op: ev.op, start: now });
+      // no node named: light a hashed area of the graph briefly so every hit is visible
+      if (!ev.nodes.length) for (const n of areaNames(`${ev.id}:${seq}`)) world.flares.push({ id: ++seq, run: ev.run_id, instance: ev.id, node: n, op: ev.op, start: now, area: true });
       if (ev.op === "read") world.stats.graphReads += ev.nodes.length;
       else world.stats.graphWrites += ev.nodes.length;
+      break;
+    case "graph_nodes":
+      if (Array.isArray(ev.nodes)) restoreGraph(ev.nodes);
       break;
     case "mcp_register": {
       // topology only: remember names/kinds; the server is drawn once an agent actually calls it
@@ -1465,6 +1481,7 @@ export function resetWorld() {
   world.hasGraphAt = 0;
   world.graphRuns.clear();
   world.graphAt = 0;
+  resetGraphDyn();
   world.halts.clear();
   globalBy.clear();
   world.primEdges.length = 0;

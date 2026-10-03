@@ -256,6 +256,7 @@ export function Archive({ galaxy }: GraphSlotProps) {
     for (let q = world.flares.length - 1; q >= 0 && shown < MAX_NAMES; q--) {
       const f = world.flares[q];
       if (now - f.start > 2200) break;
+      if (f.area) continue;
       let skip = false;
       cellPos(cellIdx(f.node), v);
       for (let z = 0; z < shown; z++) {

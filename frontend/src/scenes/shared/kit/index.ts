@@ -80,6 +80,7 @@ export { DecisionGlyph, DECISION_COLOR, DECISION_YES, DECISION_NO } from "./Deci
 export { DecisionHalos, HaloLabel, OrderChip } from "./HighVolume";
 export type { ResourceWireProps } from "./ResourceWire";
 export { KitScene, GraphStageSpace, useKitAgents, useKitRuns, useKitMcp, useKitList, useKitGalaxy } from "./KitScene";
+export { graphView, placeDynamic, dynDir, DYN_MAX } from "../graphDyn";
 export type { KitSceneProps, AgentSlotProps, EdgeSlotProps, RunSlotProps, McpServerSlotProps, BackendSlotProps, GraphSlotProps, ClusterSlotProps } from "./KitScene";
 export { PrimMark, EventChip, PrimEdges, ResourceStat } from "./Prims";
 export { McpCrystal, McpSatellite, satellitePos, DEFAULT_CRYSTAL } from "./Crystal";

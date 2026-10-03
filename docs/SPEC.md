@@ -51,8 +51,20 @@ Optional React embed: `npm i agentglow` → `<AgentScene theme="neural" source="
     agents in all (`AGENTGLOW_SNAPSHOT_AGENTS`), 32 state entries per agent, 64 steps per run; beyond them the
     oldest is forgotten. Pulses (llm, tool, mcp, messages, requests) and token totals are not snapshotted: a fresh
     viewer sees the current agents, then counts from now.
+    A fresh viewer (not a resume) also gets ONE `graph_nodes` event right after the MCP topology: the node names
+    `graph` events touched so far (even by ended runs), oldest first, `{"type": "graph_nodes", "nodes": [{"name",
+    "kind"?, "peers"?: [co-touched names]}], "ts"}`, LRU-bounded to 600 names (`AGENTGLOW_GRAPH_TOUCHED`), filtered
+    by the viewer's scope / run (the last run that touched each name). It lights nothing; the viewer rebuilds its
+    dynamic graph nodes from it (below).
   - `POST /live/topology` - `{server, resources:[{name, kind}]}` → `mcp_register` (also `agentglow.register_mcp(...)`).
   - `GET /live/graph` - optional graph sample `{nodes:[{id,name,kind}],links:[{source,target}]}`; FalkorDB provider when `AGENTGLOW_FALKOR_URL`/`--falkor` set (graph name = the URL path, else `AGENTGLOW_FALKOR_GRAPH`, default `demo`), else an empty graph `{nodes: [], links: []}` → UI uses its built-in sample.
+    Dynamic nodes (every theme, `frontend/src/scenes/shared/graphDyn.ts`): the sample is the first 220 nodes, so in a big
+    graph most touched nodes are not in it. A `graph` event naming a node outside the drawn sample ADDS it: a new
+    point (position hashed from the name: the same for every viewer and after a refresh; it buds off the sample
+    node sharing most words with its name, else a hashed one), kind from the event `kinds` (else `touched`), linked to
+    the other nodes named in the same event; then it glows like a sampled node (reads and writes keep their styles).
+    At most 400 dynamic nodes, least recently touched evicted first; sampled nodes are never evicted. A `graph`
+    event naming no node lights a hashed area (a sample node and its neighbours) briefly, without name labels.
   - `GET /live/run` / `POST /live/run`, `POST /live/approve` - optional run / approve webhooks (see "Scopes & auth").
   - `GET /live/health`; static UI at `/`, `/<theme>`, assets.
   - Ingest bodies may be gzip (`content-encoding: gzip`).
@@ -173,7 +185,7 @@ any ancestor (HatchetInstrumentor attrs), else `agentglow.run.id`, else the trac
 | LLM | OpenInference kind `LLM` or `gen_ai.operation.name ∈ {chat, text_completion, generate_content}` | `agent thinking` on start; `llm` on end - a span guessed from its parent node but ending with a non-LLM kind (react agent's RunnableSequence/call_model/should_continue) is dropped (tokens from `gen_ai.usage.input_tokens/output_tokens` or `llm.token_count.prompt/completion`; cache reads from `gen_ai.usage.cache_read_input_tokens`, `gen_ai.usage.cache_read.input_tokens` or `llm.token_count.prompt_details.cache_read`, cache writes from the matching `cache_creation` / `cache_write` keys) |
 | Tool | OpenInference kind `TOOL` or `gen_ai.operation.name=execute_tool` | `tool` |
 | MCP | span with `mcp.server.name` or `agentglow.mcp.server` (+ `agentglow.mcp.resource`, `agentglow.mcp.resource_kind` ∈ db,warehouse,spark,api,storage,queue) | `mcp call` (start, pending) / `mcp result` (end); auto `mcp_register` of server+resource. An MCP span whose parent span is not known yet (the MCP server's process reported before the caller's tool span) is held until the parent arrives (with the spans inside it), dropped after 10 s; it never starts a run. An MCP span naming no resource gets its backends auto-discovered: every DB / cache / HTTP CLIENT span inside it (see "Backend services") = `mcp_register` of that server + resource and an `mcp` call/result with `resource`, on the caller's agent; a manual `agentglow.mcp.resource` wins (nothing is discovered under it). `agentglow.watch(mcp=fastmcp_server)` opens such a span (`mcp <server>.<tool>`, SERVER kind) around every FastMCP tool call |
-| Graph/DB | `db.system` set | `graph` read/write (`agentglow.db.op` or inferred from query text); node names from `agentglow.graph.nodes` (list or JSON string) |
+| Graph/DB | `db.system` set | `graph` read/write (`agentglow.db.op` or inferred from query text); node names from `agentglow.graph.nodes` (list or JSON string); items may be `{"name", "kind"}` objects, kinds may also come parallel in `agentglow.graph.kinds` → event `kinds` (parallel to `nodes`, `null` = unknown; omitted when none is known) |
 | Final | `agentglow.final` attr on any span | `final` text |
 | Skill | hint attribute `agentglow.skill` = skill name on any span (usually a tool span); set by the Claude Code hooks adapter for the `Skill` tool (`tool_input.skill`, e.g. `hello`, `plugin:skill`), by the traces-only path from the `claude_code.tool` span's `skill_name` (needs `OTEL_LOG_TOOL_DETAILS=1`), and by the manual `skill()` | `skill` `status: "start"` when the span starts (or at end if the attribute only arrives then), `"end"` when it ends, on the owning agent; the normal `tool` event is still emitted (Claude Code `Skill` args preview = the skill name only) |
 | Framework skills (inferred) | deepagents: TOOL `read_file` whose `input.value` `file_path` matches `^(.*/)?<skill>/SKILL\.md$` (skill = parent dir); confirmed against `skills_metadata[].path` from a `SkillsMiddleware.before_agent` span's `output.value` when known (cached per `thread_id`, else trace: it is emitted only on a thread's first turn); `offset > 0` re-reads, `write_file`/`edit_file`/`ls`/`glob`/`grep` never count. OpenAI Agents SDK: TOOL `load_skill` (`input.value.skill_name`); TOOL `shell`/`exec_command`/`local_shell`/`bash`/`run_shell_command` whose command strings READ a skill file (`cat`/`sed`/`head`/`less`/`more`/`bat` ... `<skill>/SKILL.md`, no redirect, not `sed -i`; a trailing `-<32 hex>` mount suffix is stripped); hosted shell: an LLM span's `output.value` `output[]` items `type: shell_call` (`action.commands`, once per `call_id`; `input.value` is never scanned) | same `skill` start/end on the owning agent (tool span start/end; hosted shell: both at the LLM span's end); one use per (agent, skill) (deepagents also per path) |
@@ -363,7 +375,7 @@ SDK provider = no-op. Context in contextvars (asyncio tasks created inside inher
 | `llm(model, tokens_in, tokens_out)` / `Agent.llm(..., latency_ms=0)` | `chat <model>` | `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.usage.input_tokens/output_tokens` (`.set_tokens`) |
 | `tool(name, args=None)` | `<name>` | `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `input.value` = args JSON; `.result(v)` → `output.value` |
 | `mcp(server, tool, resource=None, kind="api", args=None)` | tool span | + `agentglow.mcp.server/tool/resource/resource_kind` |
-| `graph(op, nodes, system="graph")` | `db <op>` | `db.system`, `agentglow.db.op`, `agentglow.graph.nodes` |
+| `graph(op, nodes, system="graph", kinds=None)` | `db <op>` | `db.system`, `agentglow.db.op`, `agentglow.graph.nodes`, `agentglow.graph.kinds` |
 | `skill(name)` / `Agent.skill(name)` | tool span `<name>` | as `tool` + `agentglow.skill=name` (skill badge on the current agent while the block runs) |
 | `decision(kind, question, result=None, p=None, options=None, provider="llm", purpose=None, target=None)` / `Agent.decision(...)` | `decision <kind>` | the "Decisions" attributes; `.record(result, p, options, target)` sets the outcome before the block ends; a bool `result` → `yes`/`no`; `options` = `{name: p}` or `[(name, p)]` |
 | `decided(kind, question, result, p, ..., latency_ms=0, important=False, scope=None, threshold=None)` / `Agent.decided(...)` | `decision <kind>` (backdated) | one finished decision in one call, returned (pass it as a wait's `because=`); `important=True` sets `agentglow.decision.important`, `scope="global"` sets `agentglow.decision.scope`, `threshold` sets `agentglow.decision.threshold` (all also on `decision(...)`) |
@@ -657,7 +669,7 @@ spans carry none of these keys and are unchanged (regression goldens).
 
 ## World events (backend → frontend)
 Source of truth: `WorldEvent` in `frontend/src/scenes/shared/world.ts`:
-`run, step, spawn(subagent?), exit, agent, llm, message, tool, graph, mcp_register, mcp, final, skill, chat, decision,
+`run, step, spawn(subagent?), exit, agent, llm, message, tool, graph, graph_nodes (replay only), mcp_register, mcp, final, skill, chat, decision,
 decision_stats, order, request, service_stats, drives, session, stage, progress, capacity, rejected, job, deferred, fallback, gate,
 backlog, lifecycle, metric, event, resource_stats` (the last 14: see "Generic primitives"). `ts` = epoch ms.
 `request` = `{"type": "request", "run_id", "id": <service agent id>, "service", "name", "kind": "http"|"rpc"|"message"|"event",

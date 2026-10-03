@@ -47,6 +47,8 @@ export function describe(e: WorldEvent): string {
       return `${short(e.id)} · ${e.tool}(${e.args_preview})`;
     case "graph":
       return `${short(e.id)} ${e.op === "read" ? "read" : "WROTE"} graph: ${e.nodes.slice(0, 2).join(", ")}`;
+    case "graph_nodes":
+      return `graph: ${e.nodes.length} touched nodes restored`;
     case "mcp":
       return e.phase === "call" ? `${short(e.id)} → mcp ${e.server}.${e.tool}()${e.resource ? ` → ${e.resource}` : ""}` : `mcp ${e.server}.${e.tool} returned${e.latency_ms ? ` · ${Math.round(e.latency_ms)}ms` : ""}`;
     case "mcp_register":

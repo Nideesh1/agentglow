@@ -10,6 +10,7 @@ import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { GraphLabel3D, Label3D, type Label3DHandle } from "../shared/Label3D";
 import { nodeIndex } from "../shared/useSceneSetup";
+import { graphView, placeDynamic } from "../shared/graphDyn";
 import { agentLive, GraphStageSpace, graphToStage, kit, type GraphSlotProps } from "../shared/kit";
 import { KIND_COLOR, hash01, world } from "../shared/world";
 import { CurvePool, EMBER, EMBER_RX, EMBER_RY, GOLD, HeadPool, SHELL_C, WHITE, bezier, bow, clamp01, glowTexture, pointScale, reduced, ringTexture, spriteMat } from "./fx";
@@ -29,7 +30,8 @@ void main(){ float r = length(gl_PointCoord - 0.5) * 2.0; if (r > 1.0) discard;
   gl_FragColor = vec4(vC * (smoothstep(0.4, 0.0, r) * 1.2 + pow(1.0 - r, 2.4) * 0.4), 1.0); }`;
 
 export function Embers({ galaxy: full }: GraphSlotProps) {
-  const galaxy = useMemo(() => ({ nodes: full.nodes.slice(0, MAX_NODES), links: full.links }), [full]);
+  // the sample (first MAX_NODES) + the dynamic nodes events touched outside it (graphDyn.ts)
+  const galaxy = useMemo(() => graphView(full, MAX_NODES), [full]);
   const n = galaxy.nodes.length;
   const { size, gl, camera } = useThree();
   const nameRefs = useRef<(Label3DHandle | null)[]>([]);
@@ -45,6 +47,8 @@ export function Embers({ galaxy: full }: GraphSlotProps) {
       const th = hash01(nd.id, 3) * Math.PI * 2;
       pos.set([Math.cos(th) * r * EMBER_RX, Math.sin(th) * r * EMBER_RY, (hash01(nd.id, 4) - 0.5) * 2], i * 3);
     });
+    // dynamic nodes bud off their anchor (hashed offset: same spot for every viewer)
+    placeDynamic(galaxy, pos, EMBER_RX * 0.12);
     const base = galaxy.nodes.map((nd) => new THREE.Color(KIND_COLOR[nd.kind] ?? "#94a3b8").lerp(EMBER, 0.55).multiplyScalar(0.55));
     const baseSize = galaxy.nodes.map((nd) => 0.32 + Math.pow(hash01(nd.id, 5), 4) * 0.45);
     const ngeo = new THREE.BufferGeometry();
@@ -184,6 +188,7 @@ export function Embers({ galaxy: full }: GraphSlotProps) {
     for (let q = world.flares.length - 1; q >= 0 && shown < MAX_NAMES; q--) {
       const f = world.flares[q];
       if (now - f.start > 2200) break;
+      if (f.area) continue;
       let skip = false;
       for (let z = 0; z < shown; z++) if (nameShown.current[z] === f.node) skip = true;
       if (skip) continue;

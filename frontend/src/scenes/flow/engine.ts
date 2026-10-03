@@ -16,6 +16,7 @@
  */
 import * as THREE from "three";
 import type { Galaxy } from "../shared/useSceneSetup";
+import { DYN_MAX, graphView } from "../shared/graphDyn";
 import { mcpGlow,
   KIND_COLOR,
   slotStatus,
@@ -50,8 +51,10 @@ const TETHER_SEGS = 18;
 const TETHER_MAX = 16;
 export const MCP_SLOTS = 8;
 const TAU = Math.PI * 2;
-/** FalkorDB is shown as a representative sample: at most this many anchor nodes. */
-const NODE_MAX = 200;
+/** FalkorDB is shown as a representative sample: at most this many sampled anchor nodes... */
+const SAMPLE_MAX = 200;
+/** ...plus the dynamic nodes events touched outside the sample (graphDyn.ts) */
+const NODE_MAX = SAMPLE_MAX + DYN_MAX;
 
 /** natural radius of the nebula (side graph local frame) */
 export const NEB_R = 5.4;
@@ -347,7 +350,8 @@ export class FlowEngine {
    * Swap in a new graph sample (the session's graph grows while it runs). Anchors are laid out per node id (stable:
    * a node never moves when others arrive), new anchors take over a share of the nebula particles. No reset.
    */
-  setGalaxy(galaxy: Galaxy) {
+  setGalaxy(full: Galaxy) {
+    const galaxy = graphView(full, SAMPLE_MAX);
     const n = Math.min(NODE_MAX, galaxy.nodes.length);
     const old = this.nAnchors;
     this.nAnchors = n;
@@ -869,7 +873,7 @@ export class FlowEngine {
           const inst = world.instances.get(f.instance);
           this.emitRing(_v.x, _v.y, _v.z, inst ? TYPE_RGB[inst.type] : WHITE, 1.1 * gs, 0.7, now, 1.6);
         }
-        this.lastFlare = { name: f.node, op: f.op, at: now, idx };
+        if (!f.area) this.lastFlare = { name: f.node, op: f.op, at: now, idx };
       }
       if (b > this.burst[idx]) {
         this.burst[idx] = b;

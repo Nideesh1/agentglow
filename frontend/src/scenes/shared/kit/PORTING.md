@@ -65,6 +65,10 @@ as `preset`; do not add per-theme placement code outside it.
    - extras outside the slot that need the galaxy: `useKitGalaxy()`.
    - stage-sized beams/sparks drawn inside the slot: wrap them in `<GraphStageSpace>` (undoes the graph transform).
    - which side the graph sits on: `kit.graph.out` (unit outward direction), e.g. captions on the far side.
+   - dynamic nodes (`../graphDyn.ts`): the galaxy carries the served sample plus nodes events touched outside it
+     (`dyn: true`, LRU-capped at DYN_MAX). Cap with `graphView(galaxy, maxSample)` (never `slice`, it would drop
+     them), lay out the first `ns` sampled nodes as before and the rest with `placeDynamic()` / `dynDir()` (hashed:
+     stable for every viewer). Name labels skip `f.area` flares (lit for an event that named no node).
 7. **Backdrops sized to the content:** read `kit.core.hw / hh / r` (eased half extents of agents + clusters) in
    useFrame. Things that must stay visible but are theme-specific (labels at a line's end,
    a backdrop rim) go in the `extents` prop: `visit(stagePoint, radius)`.

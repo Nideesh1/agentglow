@@ -1363,10 +1363,26 @@ class Mapper:
         nodes = _json(raw) if isinstance(raw, str) else raw
         if nodes is None and isinstance(raw, str):
             nodes = [x.strip() for x in raw.split(",") if x.strip()]
-        nodes = [str(n) for n in (nodes or [])][:50]
-        if not nodes and op == "read":
+        # items may be names or {"name", "kind"} objects; kinds may also come parallel in agentglow.graph.kinds
+        rawk = a.get("agentglow.graph.kinds")
+        kinds_in = _json(rawk) if isinstance(rawk, str) else rawk
+        if kinds_in is None and isinstance(rawk, str):
+            kinds_in = [x.strip() for x in rawk.split(",")]
+        kinds_in = list(kinds_in) if isinstance(kinds_in, (list, tuple)) else []
+        names, kinds = [], []
+        for i, n in enumerate(list(nodes or [])[:50]):
+            k = kinds_in[i] if i < len(kinds_in) else None
+            if isinstance(n, dict):
+                k = n.get("kind") or k
+                n = n.get("name") or n.get("id") or ""
+            names.append(str(n))
+            kinds.append(str(k)[:40] if k else None)
+        if not names and op == "read":
             return  # empty read: nothing to light up
-        out.append({"type": "graph", "run_id": s.run, "id": self._owner(s, out), "op": op, "nodes": nodes, "ts": ts})
+        ev = {"type": "graph", "run_id": s.run, "id": self._owner(s, out), "op": op, "nodes": names, "ts": ts}
+        if any(kinds):
+            ev["kinds"] = kinds  # parallel to nodes (null = unknown); only when some kind is known
+        out.append(ev)
 
     def _final(self, run_id: str, text: Any, out: list, ts: int) -> None:
         run = self.runs.get(run_id)
