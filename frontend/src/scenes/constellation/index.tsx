@@ -10,10 +10,13 @@ import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
 import { KitScene } from "../shared/kit";
 import { NEBULA_RX } from "./fx";
 import { Nebula } from "./Nebula";
-import { Moon, Planet, Tethers } from "./Planets";
+import { Tethers } from "./Planets";
 import { RunGlow, ShootingStars } from "./Runs";
 import { Sky } from "./Sky";
 import { Lines, Star } from "./Stars";
+
+/** the kit MCP crystal in this theme's palette */
+const MCP_STYLE = { tint: "#c7d2fe", tintAmt: 0.15 };
 
 const CONTROLS = {
   minPolarAngle: Math.PI * 0.22,
@@ -39,8 +42,7 @@ export default function Scene() {
       Background={<Sky />}
       Agent={Star}
       RunMarker={RunGlow}
-      McpServer={Planet}
-      Backend={Moon}
+      mcpStyle={MCP_STYLE}
       GraphResource={Nebula}
       cluster={{ radius: 1.5, variant: "stars", glowGain: 0.9 }}
       PostFX={

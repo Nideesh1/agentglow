@@ -1353,7 +1353,8 @@ export class FlowEngine {
       this.setInst(this.pulsars, m, _v.x, _v.y, _v.z, 1 + act * 0.6 + busy * 0.2 * pulse, _c2, 0, this.mcpSpin[m], 0);
       _c2.copy(_c).multiplyScalar(0.25 + busy * 0.9 * pulse + act * 0.8);
       this.setInst(this.pulsarBeams, m, _v.x, _v.y, _v.z, 1 + busy * 0.3, _c2, 0.5 * Math.sin(this.mcpSpin[m] * 0.5), this.mcpSpin[m], 0.35 + 0.3 * Math.cos(this.mcpSpin[m]));
-      glow(gi, _v.x, _v.y, _v.z, _c, 0.6 + busy * 0.8 * pulse + act * 1.6, 9 + act * 12 + busy * 4);
+      // the kit crystal is drawn here now (pulsars stay undrawn): only a soft field glow + the jets remain
+      glow(gi, _v.x, _v.y, _v.z, _c, 0.2 + busy * 0.25 * pulse + act * 0.35, 5 + act * 3 + busy * 2);
     }
 
     // ---- shock rings (births, exits, graph flares)

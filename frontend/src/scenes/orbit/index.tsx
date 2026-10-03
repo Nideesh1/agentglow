@@ -11,8 +11,11 @@ import { KitScene } from "../shared/kit";
 import { Orb } from "./Agents";
 import { GALAXY_R, GalaxyCore } from "./Galaxy";
 import { reduced } from "./layout";
-import { Beams, Comets, McpPackets, Probe, Satellite } from "./Links";
+import { Beams, Comets, McpPackets, satAlt } from "./Links";
 import { RunOrbit } from "./Runs";
+
+/** the kit MCP crystal in this theme's palette */
+const MCP_STYLE = { tint: "#93c5fd", tintAmt: 0.15, size: 0.8, lift: satAlt };
 
 const Background = (
   <>
@@ -38,8 +41,7 @@ export default function Scene() {
       Background={Background}
       Agent={Orb}
       RunMarker={RunOrbit}
-      McpServer={Satellite}
-      Backend={Probe}
+      mcpStyle={MCP_STYLE}
       GraphResource={GalaxyCore}
       cluster={{ radius: 1.35, variant: "stars" }}
       clusterOffset={[0, 1.2, 0]}

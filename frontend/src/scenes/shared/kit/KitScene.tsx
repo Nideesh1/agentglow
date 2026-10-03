@@ -13,6 +13,7 @@ import { LOD_LANES, lod, lodTick, type LodCluster } from "../lod";
 import { useSceneSetup, type Galaxy } from "../useSceneSetup";
 import { selectInstance, selectResource, tick, useHasGraph, world } from "../world";
 import { LinkPicks, ResourcePick } from "./Picks";
+import { CrystalStyleCtx, DEFAULT_CRYSTAL, liftOf, McpCrystal, McpSatellite, type CrystalStyle } from "./Crystal";
 import { applyDim } from "./dim";
 import { FitCamera, setFitProfile, type FitProfile } from "./fit";
 import { LabelScope, labels, labelTick, type LabelScopeValue } from "./labels";
@@ -73,8 +74,11 @@ export type KitSceneProps = {
   Agent: ComponentType<AgentSlotProps>;
   Edge?: ComponentType<EdgeSlotProps>;
   RunMarker?: ComponentType<RunSlotProps>;
+  /** MCP server / backend look: default = the kit crystal + orbiting satellites (Crystal.tsx), tinted by `mcpStyle` */
   McpServer?: ComponentType<McpServerSlotProps>;
   Backend?: ComponentType<BackendSlotProps>;
+  /** the kit crystal's palette tint, brightness, halo, lift above the stage, size, sparks */
+  mcpStyle?: Partial<CrystalStyle>;
   GraphResource?: ComponentType<GraphSlotProps>;
   /** stock ClusterBall look (variant/radius...); `color` may be a function of the lane */
   cluster?: Omit<ClusterBallProps, "cluster" | "position" | "place" | "color"> & { color?: ClusterColor };
@@ -211,15 +215,16 @@ function Runs({ RunMarker }: { RunMarker: ComponentType<RunSlotProps> }) {
   );
 }
 
-function Mcp({ McpServer, Backend }: { McpServer?: ComponentType<McpServerSlotProps>; Backend?: ComponentType<BackendSlotProps> }) {
+function Mcp({ McpServer, Backend, crystal }: { McpServer?: ComponentType<McpServerSlotProps>; Backend?: ComponentType<BackendSlotProps>; crystal: CrystalStyle | null }) {
   const list = useKitMcp();
+  const lift = (m: KitMcp) => (crystal ? liftOf(crystal, m.srv) : 0);
   return (
     <>
       {list.map((m) => (
         <Fragment key={m.uid}>
           <LabelScope.Provider value={SCOPE_MCP}>
             {McpServer && (
-              <Fade item={m} pick={<ResourcePick sel={{ type: "server", server: m.name }} r={1.0} color={m.srv.color} mix={() => m.mix} />}>
+              <Fade item={m} lift={lift(m)} pick={<ResourcePick sel={{ type: "server", server: m.name }} r={1.0} color={m.srv.color} mix={() => m.mix} />}>
                 <McpServer mcp={m} />
               </Fade>
             )}
@@ -227,7 +232,7 @@ function Mcp({ McpServer, Backend }: { McpServer?: ComponentType<McpServerSlotPr
           <LabelScope.Provider value={SCOPE_BACKEND}>
             {Backend &&
               [...m.backends.values()].map((b) => (
-                <Fade key={b.uid} item={b} pick={<ResourcePick sel={{ type: "backend", server: m.name, resource: b.res.name }} r={0.55} color={m.srv.color} mix={() => b.mix * m.mix} />}>
+                <Fade key={b.uid} item={b} lift={lift(m)} pick={<ResourcePick sel={{ type: "backend", server: m.name, resource: b.res.name }} r={0.55} color={m.srv.color} mix={() => b.mix * m.mix} />}>
                   <Backend mcp={m} backend={b} />
                   <ResourceStat mcp={m} backend={b} />
                 </Fade>
@@ -245,7 +250,7 @@ function Mcp({ McpServer, Backend }: { McpServer?: ComponentType<McpServerSlotPr
  * Runs before the slots' own useFrames (priority -1, after the ticker's -2): a px-clamped Label3D inside undoes its
  * parents' world scale, and a stale (last-frame) scale would draw it many times too big while the slot fades in.
  */
-function Fade({ item, children, pick }: { item: { pos: THREE.Vector3; mix: number }; children: ReactNode; pick?: ReactNode }) {
+function Fade({ item, children, pick, lift = 0 }: { item: { pos: THREE.Vector3; mix: number }; children: ReactNode; pick?: ReactNode; lift?: number }) {
   const outer = useRef<THREE.Group>(null);
   const inner = useRef<THREE.Group>(null);
   useFrame(() => {
@@ -262,7 +267,7 @@ function Fade({ item, children, pick }: { item: { pos: THREE.Vector3; mix: numbe
   return (
     <group ref={outer} scale={0.0001} visible={false}>
       <group ref={inner}>{children}</group>
-      {pick}
+      {pick && <group position-y={lift}>{pick}</group>}
     </group>
   );
 }
@@ -373,6 +378,8 @@ export function KitScene(p: KitSceneProps) {
     [agentRadius, agentHeight],
   );
 
+  const styleKey = JSON.stringify({ ...p.mcpStyle, emit: !!p.mcpStyle?.emit });
+  const crystal = useMemo<CrystalStyle>(() => ({ ...DEFAULT_CRYSTAL, ...p.mcpStyle }), [styleKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const target = p.target ?? [0, 0, 0];
   // only pass defined control props (undefined would reset drei/three defaults)
   const ctl = useMemo(() => Object.fromEntries(Object.entries(p.controls ?? {}).filter(([, v]) => v !== undefined)), [p.controls]);
@@ -394,7 +401,9 @@ export function KitScene(p: KitSceneProps) {
           <group>
             {p.RunMarker && <Runs RunMarker={p.RunMarker} />}
             {p.GraphResource && <SideGraph galaxy={galaxy} Graph={p.GraphResource} />}
-            <Mcp McpServer={p.McpServer} Backend={p.Backend} />
+            <CrystalStyleCtx.Provider value={crystal}>
+              <Mcp McpServer={p.McpServer ?? McpCrystal} Backend={p.Backend ?? McpSatellite} crystal={p.McpServer ? null : crystal} />
+            </CrystalStyleCtx.Provider>
             <Agents Agent={p.Agent} Edge={p.Edge} selected={selected} onSelect={onSelect} radius={agentRadius} height={p.plane === "xz" ? agentHeight : 0} />
             <LabelScope.Provider value={SCOPE_CLUSTER}>
               <Clusters cluster={p.cluster} Cluster={p.Cluster} offset={p.clusterOffset} />

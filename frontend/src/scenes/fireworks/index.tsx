@@ -11,8 +11,17 @@
 import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
 import { KitScene } from "../shared/kit";
 import { Embers } from "./Embers";
-import { EMBER_RX, show } from "./fx";
-import { Lantern, Trails, Wheel } from "./Ground";
+import { BUDGET, EMBER_RX, KIND_GLITTER, KIND_SPARK, pyro, show } from "./fx";
+import type { CrystalStyle } from "../shared/kit";
+
+/** the kit crystals throw their sparks into the show's spark field */
+const MCP_STYLE: Partial<CrystalStyle> = {
+  emit: (p, v, c) => {
+    if (Math.random() > BUDGET) return;
+    pyro().emit(p.x, p.y, p.z, v.x, v.y, v.z, 2.4, 2.2, 0.4 + Math.random() * 0.35, 0.06, c, 1, Math.random() < 0.3 ? KIND_GLITTER : KIND_SPARK);
+  },
+};
+import { Trails } from "./Ground";
 import { Finale, RunSite } from "./Runs";
 import { Branches, Shell } from "./Shells";
 import { Backdrop, SparkField } from "./Sky";
@@ -41,8 +50,7 @@ export default function Scene() {
       Background={<Backdrop />}
       Agent={Shell}
       RunMarker={RunSite}
-      McpServer={Wheel}
-      Backend={Lantern}
+      mcpStyle={MCP_STYLE}
       GraphResource={Embers}
       cluster={{ radius: 1.5, variant: "stars", glowGain: 0.9 }}
       PostFX={

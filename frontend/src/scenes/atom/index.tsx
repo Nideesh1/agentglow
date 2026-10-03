@@ -10,11 +10,14 @@ import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
 import { useMemo } from "react";
 import * as THREE from "three";
 import { KitScene, fit, kit } from "../shared/kit";
-import { Beams, Detector, Sensor } from "./Detectors";
+import { Beams } from "./Detectors";
 import { Electron, Messages, Photons } from "./Electrons";
 import { MOL_R, hubs, lineMat, runTops } from "./fx";
 import { RunAtom } from "./Hub";
 import { Molecule } from "./Molecule";
+
+/** the kit MCP crystal in this theme's palette */
+const MCP_STYLE = { tint: "#3db8ff", tintAmt: 0.25, gain: 0.9, halo: 0.8, size: 0.85 };
 
 /** Faint polar reference grid behind the atoms (a plotting-plate feel): rings, ticks and radial guides. */
 function Plate() {
@@ -74,8 +77,7 @@ export default function Scene() {
       Background={<Plate />}
       Agent={Electron}
       RunMarker={RunAtom}
-      McpServer={Detector}
-      Backend={Sensor}
+      mcpStyle={MCP_STYLE}
       GraphResource={Molecule}
       cluster={{ radius: 1.3, variant: "orb" }}
       extents={extents}

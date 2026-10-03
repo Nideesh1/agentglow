@@ -82,3 +82,5 @@ export type { ResourceWireProps } from "./ResourceWire";
 export { KitScene, GraphStageSpace, useKitAgents, useKitRuns, useKitMcp, useKitList, useKitGalaxy } from "./KitScene";
 export type { KitSceneProps, AgentSlotProps, EdgeSlotProps, RunSlotProps, McpServerSlotProps, BackendSlotProps, GraphSlotProps, ClusterSlotProps } from "./KitScene";
 export { PrimMark, EventChip, PrimEdges, ResourceStat } from "./Prims";
+export { McpCrystal, McpSatellite, satellitePos, DEFAULT_CRYSTAL } from "./Crystal";
+export type { CrystalStyle, SparkEmit } from "./Crystal";

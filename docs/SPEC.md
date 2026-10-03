@@ -699,7 +699,9 @@ HTTP client got a 5xx, or a flat `call` had an error status) and `"status": <int
 a numeric `status`: the code only, never the URL). Both are omitted otherwise, so agent-only output is unchanged.
 
 ### Resource details
-Every non-agent icon is clickable in all themes (shared kit `kit/Picks.tsx`): an MCP server / resource group, each of
+MCP servers / resource groups are drawn by the shared kit in every theme (`kit/Crystal.tsx`): a faceted crystal labelled
+"MCP · <name>" / "ML · <name>" with each resource as a satellite on its own tilted orbit (name at its kit slot, tethered),
+tinted per theme (`KitScene` `mcpStyle`). Every non-agent icon is clickable in all themes (shared kit `kit/Picks.tsx`): an MCP server / resource group, each of
 its resources (satellites: databases, caches, queues, HTTP hosts, models, pools) and each agent / service -> server
 link used in the last 30 s. Hover = pointer cursor + highlight ring / line; click = the Selected panel shows "Resource
 details"; Esc, "back" or a click on empty space closes it. No new server events: the UI aggregates the `mcp` call /
@@ -719,6 +721,7 @@ loaded or the replay began) and reads `resource_stats` / `backlog`:
 Only labels the server already sent through the privacy pipeline appear: operation names, hosts / systems, status codes,
 latencies; never statements, keys, URLs with ids, arguments, results or bodies. Backend service calls are rate-limited to
 one per (agent, resource) per 250 ms on the server, so counts there are a lower bound.
+`?debugpicks` (app URL) publishes the click targets' screen positions as `window.__agentglowPicks` (browser tests).
 
 ## Frontend (`frontend/`, npm `agentglow`)
 - App build: gallery at `/`, `/<theme>`; data source = same origin `/live/stream` (`?source=<url>` override, `?sim=1` simulator, `?sim=hf` high-frequency simulator (30 market agents, ~100 decisions/s, paper orders), `?hud=0` hide HUD, `?run=<id>` one run). Output copied to `backend/agentglow/static/`.

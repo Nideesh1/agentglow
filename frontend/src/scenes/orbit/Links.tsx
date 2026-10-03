@@ -265,7 +265,7 @@ const SAT_STRUT = new THREE.BoxGeometry(0.3, 0.03, 0.03);
 const SAT_PANEL = new THREE.BoxGeometry(0.75, 0.02, 0.42);
 const SAT_BEACON = new THREE.SphereGeometry(0.55, 20, 20);
 /** satellites float a little above the orbital plane (alternating), like a far outer orbit */
-const satAlt = (slot: number) => (slot % 2 ? 0.9 : 1.6);
+export const satAlt = (slot: number) => (slot % 2 ? 0.9 : 1.6);
 
 /** MCP server slot: a space station on the outskirts (kit position, lifted off the plane). */
 export function Satellite({ mcp }: McpServerSlotProps) {
