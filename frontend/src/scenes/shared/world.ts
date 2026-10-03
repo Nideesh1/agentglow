@@ -68,7 +68,7 @@ export type WorldEvent =
   | { type: "order"; run_id: string; id: string; side: string; qty: number; price?: number; status: OrderStatus; instrument: string; dry_run: boolean; reason?: string; ts: number }
   // MCP tool call from an agent instance to an external MCP server ("call" when sent, "result" when it returns)
   // topology: an MCP server and the backends behind it (sent at worker startup and to every new viewer)
-  | { type: "mcp_register"; run_id?: string; server: string; resources: { name: string; kind: ResourceKind }[]; ts: number }
+  | { type: "mcp_register"; run_id?: string; server: string; resources: { name: string; kind: ResourceKind }[]; ts: number; kind?: "model" | "mcp" }
   | { type: "mcp"; run_id: string; id: string; server: string; tool: string; phase: "call" | "result"; latency_ms?: number; ts: number; resource?: string; resource_kind?: ResourceKind; units?: number; unit?: string; device?: string }
   // generic primitives (docs/SPEC.md "Generic primitives", prims.ts)
   | PrimWorldEvent;
@@ -518,7 +518,11 @@ export const cometOn = (c: Comet, now = performance.now()) => (now - c.start) / 
 /** External MCP servers agents call (persistent "satellites"; registered on first use). */
 /** `kind` = the shape themes draw (shapeKind), `sub` = the reported kind (model, gpu, worker, cache, ...) */
 export type McpResource = { name: string; kind: ShapeKind; sub: ResourceKind; activeAt: number; inflight: number; calls: number };
-export type McpServer = { name: string; color: string; slot: number; activeAt: number; calls: number; inflight: number; resources: Map<string, McpResource> };
+export type McpServer = {
+  name: string; color: string; slot: number; activeAt: number; calls: number; inflight: number; resources: Map<string, McpResource>;
+  /** a named resource group's kind (mcp_register `kind`): "model" = only models (labelled "ML"); absent = MCP */
+  kind?: "model" | "mcp";
+};
 /** One MCP request/response: a packet flying instance → server ("call") or server → instance ("result"). */
 export type McpCall = { id: number; run: string; instance: string; server: string; tool: string; resource?: string; phase: "call" | "result"; start: number; dur: number };
 /** An MCP call that has been sent but not answered yet: draw a live tether instance ↔ server while it waits. */
@@ -535,6 +539,11 @@ export const MCP_COLORS: Record<string, string> = {
 export type Flare = { id: number; run: string; instance: string; node: string; op: "read" | "write"; start: number };
 
 /** Finished (exit done/failed) - drawn dimmed until its run ends, then faded out with the whole run. */
+/** The label prefix of an MCP-style server: "ML" for a resource group holding only models, else "MCP". */
+export const mcpPrefix = (srv: Pick<McpServer, "kind">) => (srv.kind === "model" ? "ML" : "MCP");
+/** "MCP · backend", "ML · payment-integrity scorer": the one server label every theme draws. */
+export const mcpTitle = (srv: Pick<McpServer, "kind" | "name">) => `${mcpPrefix(srv)} · ${srv.name}`;
+
 export const isDone = (i: Instance) => i.doneAt > 0;
 /** Working: not finished and not fading out (HUD "alive", LOD budget, cluster counts). */
 export const isLive = (i: Instance) => !i.doneAt && !i.exitAt;
@@ -566,6 +575,8 @@ export const world = {
   mcpServers: new Map<string, McpServer>(),
   /** registered (not necessarily used) MCP servers: server -> backend name -> kind */
   mcpRegistry: new Map<string, Map<string, ResourceKind>>(),
+  /** resource group kinds from mcp_register (`kind`), so a server drawn later gets its ML / MCP label */
+  mcpKinds: new Map<string, "model" | "mcp">(),
   mcpCalls: [] as McpCall[],
   /** in-flight MCP calls keyed `${instance}|${server}|${tool}`; resolvedAt kept briefly for a "snap back" effect */
   mcpPending: new Map<string, McpPending>(),
@@ -1157,12 +1168,17 @@ export function apply(ev: WorldEvent) {
       let reg = world.mcpRegistry.get(ev.server);
       if (!reg) world.mcpRegistry.set(ev.server, (reg = new Map()));
       for (const r of ev.resources) if (!reg.has(r.name)) reg.set(r.name, r.kind);
+      if (ev.kind) {
+        world.mcpKinds.set(ev.server, ev.kind);
+        const drawn = world.mcpServers.get(ev.server);
+        if (drawn) drawn.kind = ev.kind;
+      }
       break;
     }
     case "mcp": {
       let srv = world.mcpServers.get(ev.server);
       if (!srv) {
-        srv = { name: ev.server, color: MCP_COLORS[ev.server] ?? "#94a3b8", slot: world.mcpServers.size, activeAt: now, calls: 0, inflight: 0, resources: new Map() };
+        srv = { name: ev.server, color: MCP_COLORS[ev.server] ?? "#94a3b8", slot: world.mcpServers.size, activeAt: now, calls: 0, inflight: 0, resources: new Map(), kind: world.mcpKinds.get(ev.server) };
         world.mcpServers.set(ev.server, srv);
       }
       srv.activeAt = now;
@@ -1402,6 +1418,7 @@ export function resetWorld() {
   world.flares.length = 0;
   world.mcpServers.clear();
   world.mcpRegistry.clear();
+  world.mcpKinds.clear();
   world.mcpCalls.length = 0;
   world.mcpPending.clear();
   world.mcpTools.clear();

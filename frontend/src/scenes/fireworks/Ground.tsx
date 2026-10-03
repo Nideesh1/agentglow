@@ -16,7 +16,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { Label3D, type Label3DHandle } from "../shared/Label3D";
-import { hash01, mcpGlow, waitSeconds, world, type McpCall } from "../shared/world";
+import { hash01, mcpGlow, mcpTitle, waitSeconds, world, type McpCall } from "../shared/world";
 import { agentLive, backendPos, serverPos, type BackendSlotProps, type McpServerSlotProps } from "../shared/kit";
 import { AMBER, BUDGET, CurvePool, GOLD, HeadPool, KIND_GLITTER, KIND_SPARK, RED, WHITE, bezier, bow, clamp01, easeInOut, easeOut, glowTexture, pyro, reduced, spriteMat } from "./fx";
 
@@ -194,7 +194,7 @@ export function Wheel({ mcp }: McpServerSlotProps) {
         <mesh geometry={GEM_GEO} material={m.gem} renderOrder={1} />
         <lineSegments geometry={GEM_EDGES} material={m.edges} scale={1.004} renderOrder={2} />
       </group>
-      <Label3D position={[0, GEM_R + 1.15, 0]} text={`MCP · ${srv.name}`} color={srv.color} size={0.28} pxRange={[9, 13]} />
+      <Label3D position={[0, GEM_R + 1.15, 0]} text={mcpTitle(srv)} color={srv.color} size={0.28} pxRange={[9, 13]} />
     </group>
   );
 }

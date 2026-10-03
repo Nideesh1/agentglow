@@ -154,7 +154,7 @@ numbers, ids and short labels only, and has a `/v1/events` form ([docs/SPEC.md](
 | capacity | `agentglow.capacity("slots", used=3, max=4)` | `cap 3/4` gauge |
 | rejected | `agentglow.rejected("busy", retry_after=2)` | amber flash; the 429 / 503 is backpressure, not an error |
 | pool | `async with agentglow.pool("whisper", size=2, kind="gpu").lease():` | a resource node with `2/4 busy · wait 12ms` |
-| inference | `with agentglow.inference("whisper-small", units=12.5, unit="audio_s"):` | a model resource with call pulses and RTF |
+| inference | `with agentglow.inference("whisper-small", units=12.5, unit="audio_s"):` | a model resource with call pulses and RTF; `group="fraud scorer"` (or env `AGENTGLOW_RESOURCE_GROUP`) labels its group "ML · fraud scorer" instead of "MCP · backend" |
 | job | `agentglow.job(order_id, state="queued")` / `with agentglow.job(order_id, attempt=2):` | one `job:<id>` node across processes: queued, running, retrying #2, done, dead |
 | link / complete | `agentglow.link(charge_id)` ... `agentglow.complete(charge_id)` | `awaiting` on the caller, a green edge when the webhook completes it |
 | fallback | `agentglow.fallback(from_="inline", to="queue", reason="timeout")` | a dashed amber edge |

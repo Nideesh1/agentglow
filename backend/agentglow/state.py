@@ -210,6 +210,8 @@ class Hub:
             names = {r["name"] for r in cur["resources"]}
             cur["resources"] += [r for r in ev.get("resources", []) if r.get("name") not in names]
             cur["ts"] = ev.get("ts", cur["ts"])
+            if ev.get("kind"):
+                cur["kind"] = ev["kind"]
         else:
             self.topology[ev["server"]] = {**ev, "resources": list(ev.get("resources", []))}
         return ev

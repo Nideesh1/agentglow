@@ -33,7 +33,7 @@ def watch(url: str | None = None, *, instrument: bool = True, service_name: str 
           allow: list | tuple = (),
           allow_message_keys: list | tuple = (), error_messages: bool = False, scrub: Callable[[dict], dict] | None = None,
           pii_patterns: list | None = None, propagate: bool | None = None,
-          backlog: bool | float = False) -> TracerProvider:
+          backlog: bool | float = False, resource_group: str | None = None) -> TracerProvider:
     """Stream spans to agentglow. `api_key` (or env AGENTGLOW_API_KEY) is sent as `x-api-key` (server
     `--ingest-key`). Reuses the global SDK TracerProvider (keeps Langfuse/OTLP exporters), else
     creates and installs one. Instruments LangChain/LangGraph/deepagents, the OpenAI Agents SDK (OpenInference), Hatchet
@@ -60,8 +60,14 @@ def watch(url: str | None = None, *, instrument: bool = True, service_name: str 
     `propagate` (default on): thread pools (`run_in_executor`, `ThreadPoolExecutor.submit`) carry the OTel context,
     so work handed to threads stays under the request that started it. Each process reports `service.instance.id`
     (hostname-pid): replicas of one service collapse into one node with an instance count.
-    `backlog=True` (or seconds): sample the broker's Redis Streams backlog (primitives.py)."""
+    `backlog=True` (or seconds): sample the broker's Redis Streams backlog (primitives.py).
+    `resource_group`: the group this process's pools, models and caches join instead of the shared `backend` group
+    (same as `agentglow.resource_group(name)` / env AGENTGLOW_RESOURCE_GROUP; a group of only models shows as "ML · name")."""
     url = _default_url(url)
+    if resource_group:
+        from . import primitives
+
+        primitives.resource_group(resource_group)
     backend = app is not None or broker is not None or mcp is not None
     name = service_name or os.environ.get("OTEL_SERVICE_NAME") or _default_service(app, broker, mcp)
     with _lock:

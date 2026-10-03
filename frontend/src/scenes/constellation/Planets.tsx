@@ -9,7 +9,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { Label3D, type Label3DHandle } from "../shared/Label3D";
-import { mcpGlow, hash01, waitSeconds, world, type McpCall } from "../shared/world";
+import { mcpGlow, mcpTitle, hash01, waitSeconds, world, type McpCall } from "../shared/world";
 import { AMBER, ArrowPool, CurvePool, RED, SPHERE_GEO, SparkPool, WHITE, bezier, bow, clamp01, easeInOut, easeOut, glowTexture, reduced, spriteMat } from "./fx";
 import { agentLive, backendPos, serverPos, type BackendSlotProps, type McpServerSlotProps } from "../shared/kit";
 
@@ -159,7 +159,7 @@ export function Planet({ mcp }: McpServerSlotProps) {
         <mesh ref={spin} geometry={SPHERE_GEO} material={m.body} scale={R} />
         {ringed && <mesh geometry={ringGeo} material={m.ring} rotation={[Math.PI / 2 - 0.25, 0, 0]} />}
       </group>
-      <Label3D position={[0, R + 0.75, 0]} text={`MCP · ${srv.name}`} color={srv.color} size={0.28} pxRange={[9, 13]} />
+      <Label3D position={[0, R + 0.75, 0]} text={mcpTitle(srv)} color={srv.color} size={0.28} pxRange={[9, 13]} />
     </group>
   );
 }

@@ -7,7 +7,7 @@ import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { Label3D, type Label3DHandle } from "../shared/Label3D";
-import { mcpGlow, TYPE_COLOR, waitSeconds, world, type Comet, type McpCall, cometOn, cometPos } from "../shared/world";
+import { mcpGlow, mcpTitle, TYPE_COLOR, waitSeconds, world, type Comet, type McpCall, cometOn, cometPos } from "../shared/world";
 import { agentLive, serverPos, type BackendSlotProps, type McpServerSlotProps } from "../shared/kit";
 import { isScout, nodeWorld, reduced } from "./layout";
 import { isExpanded, lod } from "../shared/lod";
@@ -315,7 +315,7 @@ export function Satellite({ mcp }: McpServerSlotProps) {
         ))}
       </group>
       <mesh ref={beacon} geometry={SAT_BEACON} material={m.beacon} />
-      <Label3D position={[0, -1.1, 0]} text={`MCP · ${srv.name}`} color={color} size={0.3} pxRange={[9, 13]} />
+      <Label3D position={[0, -1.1, 0]} text={mcpTitle(srv)} color={color} size={0.3} pxRange={[9, 13]} />
     </group>
   );
 }

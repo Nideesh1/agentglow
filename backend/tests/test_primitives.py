@@ -411,3 +411,60 @@ def test_native_websocket_server_span_is_an_entry_without_a_request():
     evs += m.feed("end", {**ses, "end_time_ms": t + 5000}) + m.feed("end", {**ws, "end_time_ms": t + 5001, "name": "WS /ws"})
     assert of(evs, "spawn", agent="/ws")[0]["parent_id"] == "svc:chat-api"
     assert not of(evs, "request") and [r["run_id"] for r in of(evs, "run")] == ["services"]
+
+
+# ---------------------------------------------------------------------------------------------- named resource groups
+def test_default_group_is_backend_without_kind(cap, monkeypatch):
+    monkeypatch.delenv("AGENTGLOW_RESOURCE_GROUP", raising=False)
+    with request(cap):
+        with agentglow.inference("lightgbm-payment-integrity", units=1, unit="claims"):
+            pass
+    evs, _ = feed(cap)
+    reg = of(evs, "mcp_register")[0]
+    assert reg["server"] == "backend" and "kind" not in reg
+    assert {e["server"] for e in of(evs, "mcp")} == {"backend"}
+
+
+def test_inference_group_param_names_the_group_and_marks_it_model(cap, monkeypatch):
+    monkeypatch.delenv("AGENTGLOW_RESOURCE_GROUP", raising=False)
+    with request(cap):
+        with agentglow.inference("lightgbm-payment-integrity", units=3, unit="claims", group="payment-integrity scorer"):
+            pass
+    sp = [s for k, s in cap.items if k == "end" and s["name"].startswith("inference")][0]
+    assert sp["attributes"]["agentglow.resource.group"] == "payment-integrity scorer"
+    evs, m = feed(cap)
+    reg = of(evs, "mcp_register")[0]
+    assert (reg["server"], reg["kind"], reg["resources"]) == ("payment-integrity scorer", "model",
+                                                             [{"name": "lightgbm-payment-integrity", "kind": "model"}])
+    calls = of(evs, "mcp", resource="lightgbm-payment-integrity")
+    assert calls and {e["server"] for e in calls} == {"payment-integrity scorer"}
+    st = of(m.prims.tick(10**13), "resource_stats")[0]
+    assert st["server"] == "payment-integrity scorer" and st["units"] == 3
+
+
+def test_env_and_watch_default_group_and_mixed_kind(cap, monkeypatch):
+    monkeypatch.setenv("AGENTGLOW_RESOURCE_GROUP", "scoring")
+    try:
+        with request(cap):
+            with agentglow.inference("m1"):
+                pass
+            agentglow.cache("features", hit=True)
+            primitives.resource_group("other")
+            with agentglow.inference("m2"):
+                pass
+    finally:
+        primitives.resource_group(None)
+    evs, _ = feed(cap)
+    regs = of(evs, "mcp_register")
+    assert [(r["server"], r.get("kind")) for r in regs] == [("scoring", "model"), ("scoring", "mcp"), ("other", "model")]
+
+
+def test_flat_group_field_and_topology_kind():
+    c = TestClient(create_app())
+    body = [{"service": "risk", "event": "inference", "model": "lgbm", "duration_ms": 12, "group": "payment-integrity scorer"},
+            {"service": "risk", "event": "cache", "name": "feat", "hit": True}]
+    assert c.post("/v1/events", json=body).json()["n"] == 2
+    hub = c.app.state.hub
+    assert hub.topology["payment-integrity scorer"]["kind"] == "model"
+    assert "kind" not in hub.topology["backend"]
+    assert {e["server"] for e in of(list(hub.buffer), "mcp", resource="lgbm")} == {"payment-integrity scorer"}

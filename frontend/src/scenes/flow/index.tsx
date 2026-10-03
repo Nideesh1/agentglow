@@ -12,7 +12,7 @@ import { Bloom, EffectComposer, Noise, Vignette } from "@react-three/postprocess
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { GraphLabel3D, Label3D, type Label3DHandle } from "../shared/Label3D";
-import { idleText, isIdle, mcpGlow, STEP_SLOTS, slotLabel, slotStatus, stepChips, TYPE_COLOR, useWorld, world, type AgentType, jobText } from "../shared/world";
+import { idleText, isIdle, mcpGlow, mcpPrefix, STEP_SLOTS, slotLabel, slotStatus, stepChips, TYPE_COLOR, useWorld, world, type AgentType, jobText } from "../shared/world";
 import { KitScene, fit, kit, kitRoleU, ResourceWire, runLocal, useKitGalaxy, type AgentSlotProps, type BackendSlotProps, type GraphSlotProps, type McpServerSlotProps, type RunSlotProps } from "../shared/kit";
 import { FlowEngine, NEB_R, PULSAR_Y, REDUCED } from "./engine";
 import "./flow.css";
@@ -172,7 +172,7 @@ function McpLabel({ mcp }: McpServerSlotProps) {
   useFrame(() => g.current?.position.set(mcp.pos.x + (right ? 0.9 : -0.9), PULSAR_Y, mcp.pos.z));
   return (
     <group ref={g}>
-      <Label3D text={`mcp · ${mcp.name}`} anchorX={right ? "left" : "right"} color={mcp.srv.color} size={0.28} pxRange={[8.5, 12]} />
+      <Label3D text={`${mcpPrefix(mcp.srv).toLowerCase()} · ${mcp.name}`} anchorX={right ? "left" : "right"} color={mcp.srv.color} size={0.28} pxRange={[8.5, 12]} />
     </group>
   );
 }

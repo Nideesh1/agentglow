@@ -7,7 +7,7 @@ import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { Label3D, type Label3DHandle } from "../shared/Label3D";
-import { mcpGlow, waitSeconds, world, type McpCall, type ShapeKind } from "../shared/world";
+import { mcpGlow, mcpTitle, waitSeconds, world, type McpCall, type ShapeKind } from "../shared/world";
 import { agentLive, serverPos, type BackendSlotProps, type McpServerSlotProps } from "../shared/kit";
 import { ARROW_GEO, ArrowPool, SPHERE_GEO, TUBE_GEO, additiveBasic, placeOnCurve, reduced, bezier, bowControl, clamp01, easeInOut, easeOut, glowSpriteMaterial, tubeMaterial } from "./fx";
 
@@ -189,7 +189,7 @@ export function Server({ mcp }: McpServerSlotProps) {
         <lineSegments geometry={OCTA_EDGES} material={m.line} />
         <mesh geometry={SPHERE_GEO} material={m.core} scale={0.18} />
       </group>
-      <Label3D position={[0, 1.35, 0]} text={`MCP · ${srv.name}`} color={srv.color} size={0.28} pxRange={[9, 13]} />
+      <Label3D position={[0, 1.35, 0]} text={mcpTitle(srv)} color={srv.color} size={0.28} pxRange={[9, 13]} />
     </group>
   );
 }

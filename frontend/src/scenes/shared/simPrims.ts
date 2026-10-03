@@ -1,7 +1,7 @@
 /**
  * Simulator part for the generic primitives (`?sim=1`): a small services run next to the agent runs. Services `api`
  * and `worker` (lifecycle warming -> ready), a voice session with turns + gauges, jobs with stages / progress / a retry
- * and a dead-letter now and then, a model pool + cache resource with stats, a gate, a fallback, a deferred callback,
+ * and a dead-letter now and then, a model pool + cache resource with stats, a named model group (ML label), a gate, a fallback, a deferred callback,
  * rejected requests, a metric and a backlog between the two services. Generic names only.
  */
 import type { WorldEvent } from "./world";
@@ -21,6 +21,8 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
     { type: "lifecycle", run_id: run, id: WORKER, state: "warming", ts: ts() },
     { type: "lifecycle", run_id: run, id: API, state: "ready", ts: ts() },
     { type: "mcp_register", server: "backend", resources: [{ name: "asr-model", kind: "model" }, { name: "cache", kind: "cache" }], ts: ts() },
+    // a named resource group of only models (`group=` / AGENTGLOW_RESOURCE_GROUP): labelled "ML · fraud scorer"
+    { type: "mcp_register", server: "fraud scorer", kind: "model", resources: [{ name: "risk-model", kind: "model" }], ts: ts() },
   ]);
   at(4000, () => emit({ type: "lifecycle", run_id: run, id: WORKER, state: "ready", ts: ts() }));
 
@@ -95,6 +97,10 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
         { type: "resource_stats", run_id: run, server: "backend", resource: "cache", kind: "cache", window_ms: 2000, calls: 10, p50_ms: 1, hits: 8 + (k % 3), misses: 2, ts: ts() },
       ]);
       at(40, () => emit({ type: "mcp", run_id: run, id: API, server: "backend", tool: "hit", phase: "result", latency_ms: 1, resource: "cache", resource_kind: "cache", ts: ts() }));
+    }
+    if (k % 3 === 1) {
+      emit({ type: "mcp", run_id: run, id: API, server: "fraud scorer", tool: "infer", phase: "call", resource: "risk-model", resource_kind: "model", ts: ts() });
+      at(35, () => emit({ type: "mcp", run_id: run, id: API, server: "fraud scorer", tool: "infer", phase: "result", latency_ms: 35, resource: "risk-model", resource_kind: "model", units: 1, unit: "claims", ts: ts() }));
     }
     if (k % 6 === 0) emit([{ type: "rejected", run_id: run, id: API, reason: "at capacity", retry_after_ms: 2000, status: 503, ts: ts() }, { type: "request", run_id: run, id: API, service: "api", name: "POST /jobs", kind: "http", status: 503, error: false, rejected: true, ms: 2, ts: ts() }]);
     if (k % 8 === 1) {
