@@ -232,7 +232,7 @@ function Mcp({ McpServer, Backend, crystal }: { McpServer?: ComponentType<McpSer
           <LabelScope.Provider value={SCOPE_BACKEND}>
             {Backend &&
               [...m.backends.values()].map((b) => (
-                <Fade key={b.uid} item={b} lift={lift(m)} pick={<ResourcePick sel={{ type: "backend", server: m.name, resource: b.res.name }} r={0.55} color={m.srv.color} mix={() => b.mix * m.mix} />}>
+                <Fade key={b.uid} item={b} lift={lift(m)} pick={crystal ? undefined : <ResourcePick sel={{ type: "backend", server: m.name, resource: b.res.name }} r={0.55} color={m.srv.color} mix={() => b.mix * m.mix} />}>
                   <Backend mcp={m} backend={b} />
                   <ResourceStat mcp={m} backend={b} />
                 </Fade>

@@ -712,8 +712,11 @@ a numeric `status`: the code only, never the URL). Both are omitted otherwise, s
 
 ### Resource details
 MCP servers / resource groups are drawn by the shared kit in every theme (`kit/Crystal.tsx`): a faceted crystal labelled
-"MCP · <name>" / "ML · <name>" with each resource as a satellite on its own tilted orbit (name at its kit slot, tethered),
-tinted per theme (`KitScene` `mcpStyle`). Every non-agent icon is clickable in all themes (shared kit `kit/Picks.tsx`): an MCP server / resource group, each of
+"MCP · <name>" / "ML · <name>" with each resource as a satellite on its own tilted orbit, tinted per theme (`KitScene`
+`mcpStyle`). A satellite is colored by its resource kind (`SAT_KIND_COLOR`: db, warehouse, spark, storage, model, gpu,
+cache, queue, worker, api; the theme tint only nudges it) and carries a kind glyph; its name label rides beside it
+(kind + calls/s over the last 10 s while used in the last 15 s; `resource_stats` text under it). A call flares it and
+sends a bolt crystal -> satellite, a result sends one back; idle satellites dim but stay visible. Every non-agent icon is clickable in all themes (shared kit `kit/Picks.tsx`): an MCP server / resource group, each of
 its resources (satellites: databases, caches, queues, HTTP hosts, models, pools) and each agent / service -> server
 link used in the last 30 s. Hover = pointer cursor + highlight ring / line; click = the Selected panel shows "Resource
 details"; Esc, "back" or a click on empty space closes it. No new server events: the UI aggregates the `mcp` call /

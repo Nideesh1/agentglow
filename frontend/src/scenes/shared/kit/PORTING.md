@@ -46,7 +46,8 @@ as `preset`; do not add per-theme placement code outside it.
 5. **MCP:** by default the kit draws every MCP server as a faceted crystal with its backends as satellites on
    tilted orbits (`Crystal.tsx`); a theme tints it with `mcpStyle` (`tint` + `tintAmt`, `gain`, `halo`, `lift` above
    the stage (number or per server slot), `size`, `emit` for sparks) and gets the Resource details click targets
-   (`Picks.tsx`) for free. `satellitePos(server, res)` = the moving satellite (trails can end on it). A theme may still
+   (`Picks.tsx`) for free. Satellites are colored by resource kind (`SAT_KIND_COLOR`) with their label riding beside
+   them. `satellitePos(server, res)` = the moving satellite (trails can end on it), `satelliteRadius` its size. A theme may still
    pass its own `McpServer` slot (`{ mcp }`) and `Backend` slot (`{ mcp, backend }`). Position from `mcp.pos` /
    `backend.pos` EVERY FRAME (they ease when the periphery re-lays out); `mcp.out` = outward direction.
    Delete `satPos`/`backendPos` and the per-server `res.map(<Backend>)`.
