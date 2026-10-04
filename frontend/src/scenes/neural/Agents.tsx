@@ -74,7 +74,7 @@ export function Soma({ agent, onSelect }: AgentSlotProps) {
       spike: additiveBasic(color),
       ring: additiveBasic(AMBER),
       halo: glowSpriteMaterial(color),
-      syn: tubeMaterial(color, isScout(inst.type) ? 0.08 : 0.11, 0.8),
+      syn: tubeMaterial(color, isScout(inst.type) ? 0.1 : 0.13, 0.35),
       arrow: additiveBasic(color),
     }),
     [color, inst.type],
@@ -101,8 +101,8 @@ export function Soma({ agent, onSelect }: AgentSlotProps) {
     const pp = inst.parent ? agentLive(inst.parent) : undefined;
     if (pp) s.p0.copy(pp), (s.p0set = true);
     else if (!s.p0set) s.p0.copy(live), (s.p0set = true);
-    // straight-ish spokes out of the parent (subagents encircle it), others bow gently
-    bowControl(s.p0, live, isScout(inst.type) || inst.subagent ? 0.25 : 0.6, s.p1);
+    // straight spoke out of the parent (the kit lays the tree out radially: links never cross); control = midpoint
+    s.p1.addVectors(s.p0, live).multiplyScalar(0.5);
 
     // ---- lifecycle
     const tb = (now - inst.bornAt) / 1000;
@@ -171,6 +171,7 @@ export function Soma({ agent, onSelect }: AgentSlotProps) {
     u.uSpark.value = 0;
     u.uHead.value = grow < 1 ? grow : -1;
     u.uTail.value = 0.1;
+    u.uFade.value = 0.4; // bright at the parent, fading toward the child
     u.uHeadColor.value.copy(color).multiplyScalar(1.5);
     u.uOpacity.value = (thinking ? 1.1 : 0.75) * Math.max(0.0, Math.min(s.parentK, pres > 0 ? 1 : 0)) + (grow < 1 ? 0.4 : 0);
     u.uTime.value = reduced ? 0 : t;

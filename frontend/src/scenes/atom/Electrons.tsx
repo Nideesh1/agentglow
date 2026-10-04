@@ -284,8 +284,8 @@ export function Electron({ agent, selected, onSelect }: AgentSlotProps) {
     const u = m.field.uniforms;
     u.uP0.value.copy(s.par);
     u.uP2.value.copy(live);
-    // subagents encircle their parent: near-straight spokes; others bow
-    bow(s.par, live, sub ? 0.3 : 1.4, s.ctrl);
+    // subagents: straight spokes (the kit radial tree keeps straight links from crossing); others bow
+    bow(s.par, live, sub ? 0 : 1.4, s.ctrl);
     u.uP1.value.copy(s.ctrl);
     const gl = easeInOut((now - inst.bornAt) / 900);
     u.uGrow.value = inst.parent && s.linkK > 0.01 ? gl : 0;

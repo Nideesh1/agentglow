@@ -25,6 +25,13 @@ export type AgentSceneProps = {
    * "not authorized" in the HUD instead of falling back to the simulator.
    */
   token?: string;
+  /** Show the per-viewer "Clear view" HUD button (and Shift+C). Default true. The server is never touched. */
+  clearable?: boolean;
+  /**
+   * Controlled clear: an epoch-ms timestamp hides everything older for this viewer (as the HUD button does),
+   * `null` shows everything again, `undefined` (default) leaves it to the viewer. See also clearView() / showAllView().
+   */
+  clearedAt?: number | null;
   style?: CSSProperties;
   className?: string;
 };
@@ -36,13 +43,13 @@ function sceneFor(theme: Theme) {
   return c;
 }
 
-export function AgentScene({ theme = "neural", source = "", hud = true, sim = false, scope, run, token, style, className }: AgentSceneProps) {
+export function AgentScene({ theme = "neural", source = "", hud = true, sim = false, scope, run, token, clearable = true, clearedAt, style, className }: AgentSceneProps) {
   const t: Theme = (THEMES as readonly string[]).includes(theme) ? theme : "neural";
   const Scene = sceneFor(t);
   const src = normalizeSource(source);
   const config = useMemo<SceneConfig>(
-    () => ({ source: src, sim, hud, embedded: true, scope: scope || undefined, run: run || undefined, token: token || undefined }),
-    [src, sim, hud, scope, run, token],
+    () => ({ source: src, sim, hud, embedded: true, scope: scope || undefined, run: run || undefined, token: token || undefined, clearable, clearedAt }),
+    [src, sim, hud, scope, run, token, clearable, clearedAt],
   );
   return (
     <div className={`agentglow-embed${className ? ` ${className}` : ""}`} style={style} data-theme={t}>

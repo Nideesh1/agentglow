@@ -228,6 +228,8 @@ import { AgentScene } from "agentglow";
 | `className` | - | CSS class for the container |
 | `scope` / `run` | - | show only one user's/tenant's runs, or a single run (see [Security](#security--privacy)) |
 | `token` | - | viewer token minted by your backend; sent as `Authorization: Bearer` |
+| `clearable` | `true` | HUD **Clear view** button + Shift+C: hide everything on screen for this viewer only, then draw only new activity (`cleared · show all` undoes it; survives a refresh) |
+| `clearedAt` | - | controlled clear: epoch ms = clear at that moment, `null` = show everything |
 
 ```tsx
 <AgentScene theme="constellation" sim hud={false} style={{ height: 400 }} />   // demo background, no server
@@ -323,7 +325,7 @@ shared server never receives prompts. `npx agentglow status` shows `prompts: cap
 | gates / capacity / rejections | lock badge (`locked · 2 left`), `cap 3/4`, amber flash for a 429 / 503 that is backpressure |
 | lifecycle | tint ring: blue loading / warming, amber degraded, grey draining, red fatal; a pulse on restart |
 | business events | chips next to the node, like orders |
-| quiet runs (no events for 3 min, not waiting) | dimmed, labelled `idle · 4m`; bright again on the next event. `×` in the Selected panel hides a run for you |
+| quiet runs (no events for 3 min, not waiting) | dimmed, labelled `idle · 4m`; bright again on the next event. `×` in the Selected panel hides a run for you; **Clear view** (Shift+C) hides everything on screen for you and keeps drawing only new activity |
 
 **A Claude Code ball stays after its terminal closed?** A killed session sends no SessionEnd: it dims as idle after
 3 min (`AGENTGLOW_IDLE_DIM_MIN`) and closes as abandoned after 10 min of silence (`AGENTGLOW_SESSION_IDLE_MIN`; 30 =

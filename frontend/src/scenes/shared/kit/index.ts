@@ -83,5 +83,5 @@ export { KitScene, GraphStageSpace, useKitAgents, useKitRuns, useKitMcp, useKitL
 export { graphView, placeDynamic, dynDir, DYN_MAX } from "../graphDyn";
 export type { KitSceneProps, AgentSlotProps, EdgeSlotProps, RunSlotProps, McpServerSlotProps, BackendSlotProps, GraphSlotProps, ClusterSlotProps } from "./KitScene";
 export { PrimMark, EventChip, PrimEdges, ResourceStat } from "./Prims";
-export { McpCrystal, McpSatellite, satellitePos, DEFAULT_CRYSTAL } from "./Crystal";
+export { McpCrystal, McpSatellite, satellitePos, satelliteRadius, SAT_KIND_COLOR, DEFAULT_CRYSTAL } from "./Crystal";
 export type { CrystalStyle, SparkEmit } from "./Crystal";

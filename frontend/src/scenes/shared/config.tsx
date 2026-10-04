@@ -20,6 +20,10 @@ export type SceneConfig = {
   run?: string;
   /** Bearer token minted by the host backend; sent as `Authorization: Bearer <token>`, never in a URL. */
   token?: string;
+  /** Offer the per-viewer "Clear view" HUD button and its Shift+C shortcut (default true). */
+  clearable?: boolean;
+  /** Controlled clear: epoch ms = clear at that moment, null = show everything, undefined = leave it to the viewer. */
+  clearedAt?: number | null;
 };
 
 /** Strip trailing slashes so `${source}/live/...` is always well-formed. */
@@ -35,6 +39,7 @@ export function configFromUrl(): SceneConfig {
     hud: q.get("hud") === null ? true : flag("hud"),
     embedded: false,
     run: q.get("run")?.trim() || undefined,
+    clearable: true,
   };
 }
 

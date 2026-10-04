@@ -51,6 +51,21 @@ export type KitAgent = {
   cell: number;
   foot: number;
   kidFoot: number;
+  /**
+   * radial tree (layout.ts, subagents): `tr` = its depth-0 ancestor (the tree root, null for a root / not laid out),
+   * its angular wedge round the root (centre `wc`, width `ww`, run-local u/v radians; every descendant stays inside
+   * it) and its ring radius `rho` in units of the root's first ring (rx, ry). On a root: `rhoD[d]` = the ring radius
+   * of depth d this frame, `treeR` = the outermost one (last frame, sizes its footprint).
+   */
+  tr: KitAgent | null;
+  wc: number;
+  ww: number;
+  rho: number;
+  rhoD: Float64Array;
+  treeR: number;
+  /** subtree weight (leaf count, an empty child slot = 1) and how many of its children are drawn (measureRings) */
+  tw: number;
+  kn: number;
   /** where its ring starts (fraction of a step) and the frame that was computed in (layout.ts) */
   ringOff: number;
   ringAt: number;

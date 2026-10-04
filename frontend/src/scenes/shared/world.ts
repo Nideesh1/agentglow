@@ -777,13 +777,160 @@ function admitHv(d: DecisionUse, now: number): boolean {
   hvShown.push(d);
   return true;
 }
+/*
+ * Clear view (per viewer, docs/SPEC.md "Clear view"): hide everything drawn so far and draw only events with
+ * `ts >= clearedAt` from then on. Nothing is deleted on the server and other viewers are unaffected.
+ * Events older than the clear are dropped by apply(), except metadata that draws nothing (mcp_register,
+ * graph_nodes). A run or agent started before the clear that is still working re-appears on its next event:
+ * `shadowRuns` / `shadowSpawns` remember what was open at the clear (and what a replay after a refresh opened
+ * before it), and the first newer event that names one re-creates it as if it started then (partial is fine).
+ */
+let clearedAt = 0;
+const clearSubs = new Set<() => void>();
+const shadowRuns = new Map<string, Extract<WorldEvent, { type: "run" }>>();
+const shadowSpawns = new Map<string, Extract<WorldEvent, { type: "spawn" }>>();
+/** sim mode only: raw events seen this session (capped), replayed by showAllView() (live mode re-reads the server) */
+const simLog: WorldEvent[] = [];
+const SIM_LOG_MAX = 50_000;
+
+/** epoch ms of this viewer's clear (0 = not cleared) */
+export const viewClearedAt = () => clearedAt;
+/** React hook: the clear timestamp (0 = showing everything) */
+export function useClearedAt(): number {
+  return useSyncExternalStore(
+    (f) => (clearSubs.add(f), () => clearSubs.delete(f)),
+    () => clearedAt,
+    () => 0,
+  );
+}
+function setClearedAtValue(t: number) {
+  if (clearedAt === t) return;
+  clearedAt = t;
+  clearSubs.forEach((f) => f());
+}
+
+/** remember an older-than-clear event that opens / closes a run or an agent (for re-appearing later) */
+function shadowNote(ev: WorldEvent) {
+  if (ev.type === "run") {
+    if (ev.status === "started") shadowRuns.set(ev.run_id, ev);
+    else if (ev.status === "completed" || ev.status === "failed") shadowRuns.delete(ev.run_id);
+  } else if (ev.type === "spawn") shadowSpawns.set(ev.id, ev);
+  else if (ev.type === "exit") shadowSpawns.delete(ev.id);
+}
+
+/** a newer event names a run / agent hidden by the clear: re-create it first (parents before children) */
+function revive(ev: WorldEvent, ts: number) {
+  if (!shadowRuns.size && !shadowSpawns.size) return;
+  const runId = "run_id" in ev ? (ev.run_id as string | undefined) : undefined;
+  if (ev.type === "run" || ev.type === "exit") {
+    // an end needs no re-creation: forget it
+    if (ev.type === "run" && runId && ev.status !== "started" && ev.status !== "renamed" && ev.status !== "idle" && ev.status !== "active") shadowRuns.delete(runId);
+    if (ev.type === "exit") shadowSpawns.delete(ev.id);
+    return;
+  }
+  const reviveRun = (id: string | undefined) => {
+    const r = id ? shadowRuns.get(id) : undefined;
+    if (!r || world.runs.has(r.run_id)) return;
+    shadowRuns.delete(r.run_id);
+    applyNow({ ...r, ts });
+  };
+  const reviveAgent = (id: unknown, depth = 0) => {
+    if (typeof id !== "string" || world.instances.has(id) || depth > 16) return;
+    const s = shadowSpawns.get(id);
+    if (!s) return;
+    shadowSpawns.delete(id);
+    reviveRun(s.run_id);
+    if (s.parent_id) reviveAgent(s.parent_id, depth + 1);
+    applyNow({ ...s, ts, ...(s.job ? { since: s.since ?? s.ts } : {}) });
+  };
+  reviveRun(runId);
+  const e = ev as { id?: unknown; from_id?: unknown; to_id?: unknown; parent_id?: unknown };
+  if (ev.type === "spawn") reviveAgent(e.parent_id);
+  else reviveAgent(e.id);
+  if (ev.type === "message") (reviveAgent(e.from_id), reviveAgent(e.to_id));
+}
+
+/** Apply one world event (stream, replay or simulator). Honours this viewer's clear (see clearView). */
+export function apply(ev: WorldEvent) {
+  if (world.mode === "sim") {
+    simLog.push(ev);
+    if (simLog.length > SIM_LOG_MAX) simLog.splice(0, simLog.length - SIM_LOG_MAX);
+  }
+  if (clearedAt) {
+    const ts = typeof ev.ts === "number" ? ev.ts : 0;
+    if (ts && ts < clearedAt && ev.type !== "mcp_register" && ev.type !== "graph_nodes") {
+      shadowNote(ev);
+      return;
+    }
+    revive(ev, ts || Date.now());
+  }
+  applyNow(ev);
+}
+
+/** Empty the drawn world but keep the connection state (mode, graph backdrop, MCP registry). */
+function emptyWorld() {
+  const keep = { mode: world.mode, simulated: world.simulated, unauthorized: world.unauthorized, graphLabel: world.graphLabel, hasGraph: world.hasGraph, hasGraphAt: world.hasGraphAt };
+  const registry = new Map(world.mcpRegistry);
+  const kinds = new Map(world.mcpKinds);
+  resetWorld();
+  Object.assign(world, keep);
+  for (const [k, v] of registry) world.mcpRegistry.set(k, v);
+  for (const [k, v] of kinds) world.mcpKinds.set(k, v);
+  notify();
+}
+
+/**
+ * Clear this viewer's view at `at` (epoch ms, default now): everything drawn so far is hidden (runs, agents,
+ * services, MCP servers, graph glow, events, counters) and only events with `ts >= at` draw from then on. Runs and
+ * agents still open at the clear re-appear on their next event. Connection-level code persists the timestamp.
+ */
+export function clearWorldAt(at = Date.now()) {
+  shadowRuns.clear();
+  shadowSpawns.clear();
+  for (const r of world.runs.values()) {
+    if (r.status !== "started") continue;
+    shadowRuns.set(r.id, { type: "run", run_id: r.id, status: "started", topic: r.topic, workflow: r.workflow, ts: at });
+  }
+  for (const i of world.instances.values()) {
+    if (i.doneAt || i.exitAt) continue;
+    shadowSpawns.set(i.id, { type: "spawn", run_id: i.run, id: i.id, agent: i.name, parent_id: i.parent, subagent: i.subagent, ...(i.job ? { job: true, since: i.job.since } : {}), ts: at });
+  }
+  setClearedAtValue(at);
+  emptyWorld();
+}
+
+/**
+ * Set the clear timestamp without touching what is drawn: for a world that is about to be (re)filled from a replay
+ * (page load with a persisted clear). 0 = no clear.
+ */
+export function setViewClearedAt(at: number) {
+  shadowRuns.clear();
+  shadowSpawns.clear();
+  setClearedAtValue(at > 0 ? at : 0);
+}
+
+/** Undo the clear: empty the world and, in sim mode, replay this session's events (live mode re-reads the server). */
+export function unclearWorld(replaySim: boolean) {
+  setViewClearedAt(0);
+  emptyWorld();
+  if (replaySim) {
+    const log = simLog.splice(0);
+    for (const ev of log) apply(ev);
+  }
+}
+
+/** forget the sim log (a fresh connection) */
+export function resetSimLog() {
+  simLog.length = 0;
+}
+
 /** high-frequency event types: no immediate React notify (the HUD catches up within HUD_NOTIFY_MS) */
 const QUIET = new Set(["decision", "decision_stats", "order", "request", "service_stats", "drives", ...PRIM_QUIET]);
 const HUD_NOTIFY_MS = 250;
 let dirty = false;
 let notifiedAt = 0;
 
-export function apply(ev: WorldEvent) {
+function applyNow(ev: WorldEvent) {
   const now = performance.now();
   const evRun = "run_id" in ev ? world.runs.get(ev.run_id as string) : undefined;
   if (evRun) evRun.lastEventAt = now;

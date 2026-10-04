@@ -33,7 +33,7 @@ as `preset`; do not add per-theme placement code outside it.
      depend on size in a group you move in useFrame (`-0.8 * agent.scale`). Overlaps are handled by the kit
      (`labels.ts`): every Label3D is ranked by the slot it renders in and hidden / shortened when it collides;
      override the class with `declutter="run" | "mcp" | ...` or opt out with `declutter={false}`.
-   - parent edge: parent position = `agentLive(inst.parent)`; subagents encircle their parent (a full ring, any direction), so draw the edge straight-ish from parent to child (no trunk along `agent.run.axis`).
+   - parent edge: parent position = `agentLive(inst.parent)`; subagents form a radial tree round their top-level agent (each child owns a wedge its whole subtree stays in, one concentric ring per depth), so draw the edge STRAIGHT from parent to child: straight edges never cross (no trunk along `agent.run.axis`, no bow).
    - delete the theme's list component (`Somas`, `Blips`, `Network`): the kit renders one slot per drawn agent,
      keyed by `agent.uid` (collapsed-then-expanded agents get a fresh object).
 3. **RunMarker slot** (`{ run }`): auras, lines, sector arcs, run labels. Frame: `run.origin`, `run.axis` (fan
@@ -46,7 +46,8 @@ as `preset`; do not add per-theme placement code outside it.
 5. **MCP:** by default the kit draws every MCP server as a faceted crystal with its backends as satellites on
    tilted orbits (`Crystal.tsx`); a theme tints it with `mcpStyle` (`tint` + `tintAmt`, `gain`, `halo`, `lift` above
    the stage (number or per server slot), `size`, `emit` for sparks) and gets the Resource details click targets
-   (`Picks.tsx`) for free. `satellitePos(server, res)` = the moving satellite (trails can end on it). A theme may still
+   (`Picks.tsx`) for free. Satellites are colored by resource kind (`SAT_KIND_COLOR`) with their label riding beside
+   them. `satellitePos(server, res)` = the moving satellite (trails can end on it), `satelliteRadius` its size. A theme may still
    pass its own `McpServer` slot (`{ mcp }`) and `Backend` slot (`{ mcp, backend }`). Position from `mcp.pos` /
    `backend.pos` EVERY FRAME (they ease when the periphery re-lays out); `mcp.out` = outward direction.
    Delete `satPos`/`backendPos` and the per-server `res.map(<Backend>)`.

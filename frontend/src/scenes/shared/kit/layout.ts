@@ -2,7 +2,7 @@
  * Kit layout engine: kitTick() runs once per frame (after world tick() + lodTick()) and owns WHERE everything is:
  *   1. membership: which agents/runs are drawn (lod isExpanded / isRunExpanded), MCP servers/backends
  *   2. run-local agent coords (u along the run's side line, v along its axis): top-level agents on role slots
- *      (planner | researcher | writer), subagents on full rings round their parent, seeded jitter, stable slots
+ *      (planner | researcher | writer), subagents in a radial tree round their top-level agent (wedges, one ring per depth), seeded jitter, stable slots
  *   3. run anchors from the theme's preset (presets.ts), each run centred on its anchor
  *   4. cluster balls (grouped mode), core extents, periphery: MCP servers + backends and the side graph
  *   5. easing (~0.6s) of every position; agent `live` = eased home (themes add their own motion on top)
@@ -141,6 +141,14 @@ function mkAgent(inst: Instance): KitAgent {
     ry: 0,
     rings: 0,
     cell: 0,
+    tr: null,
+    wc: 0,
+    ww: 0,
+    rho: 0,
+    rhoD: new Float64Array(TREE_D + 1),
+    treeR: 0,
+    tw: 1,
+    kn: 0,
     ringOff: 0,
     ringAt: -1,
     svcIdx: -1,
@@ -240,14 +248,18 @@ function orderRuns() {
 // ------------------------------------------------------------------ run-local agent layout
 
 /**
- * Subagents encircle their parent: a FULL ring (360 deg, evenly spaced by arc length), at every level. A top-level
- * parent's ring is an ellipse in the free area's aspect when its run is the only one on screen (the main group fills
- * the screen); other rings are circles
- * with smaller gaps. More than RING_CAP siblings use concentric rings (alternate rings staggered half a step).
- * Ring sizes are measured bottom-up first (footprints): a ring's gap fits its members' own rings, so nested rings
- * never overlap their neighbours, and top-level agents of one run sit their footprints apart.
- * A top-level ring starts so no member sits straight below the parent (its name label) and a single subagent goes
- * down-right; a nested ring starts beside the line to the grandparent (that edge stays clear).
+ * Subagents form a RADIAL TREE round their top-level agent (the root): its children sit on a FULL ring (360 deg,
+ * evenly spaced by arc length, 360/n apart). Each child owns an angular WEDGE (its share of the root's circle) and
+ * every descendant stays inside it: a node splits its wedge between its child slots by leaf count, and each depth sits on
+ * its own concentric ring round the root (radius by depth, grown until the narrowest wedge at that depth has a
+ * neighbour gap of room). Straight parent -> child links therefore never cross or overlap; two children of a node
+ * fan out as a small "V" inside its wedge. A root's ring is an ellipse in the free area's aspect when its run is
+ * the only one on screen (the main group fills the screen; the whole tree is stretched the same way, which keeps
+ * links apart); other rings are circles. More than RING_CAP children of a root use concentric rings (alternate
+ * rings staggered half a step). Footprints are measured bottom-up first; a root's footprint covers its outermost
+ * tree ring (last frame), so top-level agents of one run sit their trees apart.
+ * A root's ring starts so no member sits straight below the root (its name label) and a single subagent goes
+ * down-right.
  * Siblings keep their slot (sib) and the count only grows while the parent is visible (kidsMax): stable, eased.
  */
 const RING_CAP = 16;
@@ -259,6 +271,12 @@ const RING_DR = 0.9;
 /** footprint radius of a childless agent (local units, before fit.spread) */
 const FOOT = 1.3;
 const TAU = Math.PI * 2;
+/** deepest tree ring tracked per root (deeper agents share it) */
+const TREE_D = 7;
+/** radial step between tree rings, in fanLen units (local, before fit.spread) */
+const TREE_STEP = 0.85;
+/** widest wedge a root child gets (a lone child / two children: its subtree still fans outward, never round the root) */
+const WEDGE_MAX = Math.PI;
 /** arc-length table of the last ellipse asked for (equal spacing along the curve, not in angle) */
 const ARC_N = 96;
 const arc = { rx: 0, ry: 0, t: new Float64Array(ARC_N + 1) };
@@ -299,7 +317,7 @@ const SVC_SHRINK_MS = 6000;
 function measureRings() {
   const L = config.preset.local;
   const now = performance.now();
-  for (const a of kit.agents.values()) (a.kidFoot = 0), (a.kidsHi = 0);
+  for (const a of kit.agents.values()) (a.kidFoot = 0), (a.kidsHi = 0), (a.tw = 0), (a.kn = 0);
   for (const a of kit.agents.values()) {
     const p = a.depth > 0 && a.inst.parent ? kit.agents.get(a.inst.parent) : undefined;
     if (p) p.kidsHi = Math.max(p.kidsHi, a.sib + 1);
@@ -317,6 +335,7 @@ function measureRings() {
   for (let d = 6; d >= 0; d--)
     for (const a of kit.agents.values()) {
       if (a.depth !== d && !(d === 6 && a.depth > 6)) continue;
+      a.tw = Math.max(1, a.tw + Math.max(0, a.kidsMax - a.kn)); // leaves below it (children add theirs first)
       const n = a.kidsMax;
       if (!n) {
         a.rx = a.ry = 0;
@@ -327,8 +346,7 @@ function measureRings() {
         const m = Math.ceil(n / RING_CAP);
         const per = Math.ceil(n / m);
         const kid = Math.max(FOOT, a.kidFoot);
-        // a small ring keeps its members' own rings apart; a big one (a desk's markets) doesn't: their children
-        // start on the side away from the parent (ringOffset), outside the ring, and kitExtents keeps room for them
+        // a root's ring: a neighbour gap per member (their subtrees grow outward in their wedges, see treeWedges)
         const cell = Math.max(L.subGap * (top ? CELL_TOP : CELL_SUB), n < RING_BIG ? kid * 2 + 0.6 : 0);
         const r = Math.max(top ? L.fanLen * 1.3 : L.fanLen * 0.85, n > 1 ? (per * cell) / TAU : 0);
         if (top && n > 1 && kit.runs.size === 1) {
@@ -345,7 +363,12 @@ function measureRings() {
         const grow = (m - 1) * cell * RING_DR;
         a.foot = Math.max(a.rx, a.ry) + grow + kid;
       }
+      // a subagent's own children live in its root's radial tree (its wedge, further out), not round it; a root's
+      // footprint covers its outermost tree ring (last frame's, eased positions follow)
+      if (a.depth > 0) a.foot = FOOT;
+      else if (a.treeR > 0) a.foot = Math.max(a.foot, Math.max(a.rx, a.ry) * a.treeR + FOOT);
       const p = a.inst.parent ? kit.agents.get(a.inst.parent) : undefined;
+      if (p && a.depth > 0) (p.tw += a.tw), p.kn++;
       if (p && a.depth > 0) p.kidFoot = Math.max(p.kidFoot, a.foot);
       else if (a.depth === 0) a.run.foot = Math.max(a.run.foot, a.foot);
     }
@@ -446,6 +469,15 @@ function placeLocal(a: KitAgent) {
   const p = inst.parent ? kit.agents.get(inst.parent) : undefined;
   if (!p) return; // parent not drawn (collapsed / gone): keep the last spot
   const n = (a.sibs = Math.max(1, p.kidsMax));
+  const tr = p.tr;
+  if (p.depth > 0 && tr) {
+    // radial tree, depth >= 2: inside its parent's wedge (treeWedges), on its depth's ring round the root
+    const du = Math.cos(a.wc) * a.rho * tr.rx;
+    const dv = Math.sin(a.wc) * a.rho * tr.ry;
+    a.u = tr.u + du * sp;
+    a.v = tr.v + dv * sp;
+    return;
+  }
   const m = Math.max(1, p.rings);
   const j = a.sib % m; // ring (siblings go round-robin over the rings: every ring fills evenly)
   const idx = Math.floor(a.sib / m);
@@ -453,19 +485,49 @@ function placeLocal(a: KitAgent) {
   const k = 1 + (j * p.cell * RING_DR) / Math.max(1e-3, Math.max(p.rx, p.ry));
   const rx = p.rx * k;
   const ry = p.ry * k;
-  let du: number, dv: number;
-  if (!p.inst.parent && cnt === 1 && m === 1) {
-    // a lone subagent of a top-level agent: down-right (clear of its name below and the run line / label)
-    du = Math.SQRT1_2 * rx;
-    dv = Math.SQRT1_2 * ry;
-  } else {
-    const o = ringOffset(p, cnt);
-    const t = ringAngle(p, (idx + o + (j % 2) * 0.5) / cnt, rx, ry);
-    du = Math.cos(t) * rx;
-    dv = Math.sin(t) * ry;
+  let t: number;
+  if (!p.inst.parent && cnt === 1 && m === 1) t = Math.PI / 4; // a lone subagent of a top-level agent: down-right (clear of its name below and the run line / label)
+  else t = ringAngle(p, (idx + ringOffset(p, cnt) + (j % 2) * 0.5) / cnt, rx, ry);
+  a.u = p.u + Math.cos(t) * rx * sp;
+  a.v = p.v + Math.sin(t) * ry * sp;
+  if (p.depth === 0) {
+    // a root's child: the root of a wedge (its share of the circle) that its whole subtree stays in
+    a.tr = p;
+    a.wc = t;
+    a.ww = Math.min(WEDGE_MAX, TAU / n);
+    a.rho = k;
+    p.rhoD[1] = Math.max(p.rhoD[1], k);
+  } else a.tr = null; // parent not in a tree yet (picked up next frame)
+}
+
+/**
+ * Radial tree, depth d >= 2 (parents placed): each node's wedge = its share of its parent's wedge by leaf count, then
+ * the depth's ring radius per root: one step (TREE_STEP) outside the previous ring, and wide enough that the
+ * narrowest wedge on it still holds a neighbour gap (arc length = radius * wedge).
+ */
+function treeWedges(d: number) {
+  const L = config.preset.local;
+  for (const a of kit.agents.values()) {
+    if (Math.min(a.depth, TREE_D) !== d) continue;
+    const p = a.inst.parent ? kit.agents.get(a.inst.parent) : undefined;
+    const tr = p && p.depth > 0 ? p.tr : null;
+    a.tr = tr;
+    if (!p || !tr) continue;
+    // its slot's share of the parent's wedge, by subtree weight (leaves; an empty slot counts 1), in slot order
+    let before = a.sib;
+    for (const o of kit.agents.values()) if (o.sib < a.sib && o.depth > 0 && o.inst.parent === p.id) before += o.tw - 1;
+    const total = Math.max(1, p.tw);
+    a.ww = (p.ww * a.tw) / total;
+    a.wc = p.wc - p.ww / 2 + (p.ww * before) / total + a.ww / 2;
+    const r = Math.max(1e-3, Math.sqrt(tr.rx * tr.ry));
+    tr.rhoD[d] = Math.max(tr.rhoD[d], tr.rhoD[d - 1] + (TREE_STEP * L.fanLen) / r, (L.subGap * CELL_SUB) / (r * Math.max(1e-3, a.ww)));
   }
-  a.u = p.u + du * sp;
-  a.v = p.v + dv * sp;
+  for (const a of kit.agents.values()) {
+    if (Math.min(a.depth, TREE_D) !== d || !a.tr) continue;
+    const p = kit.agents.get(a.inst.parent!)!;
+    a.rho = Math.max(a.tr.rhoD[d], p.rho + (TREE_STEP * config.preset.local.fanLen) / Math.max(1e-3, Math.sqrt(a.tr.rx * a.tr.ry)));
+    a.tr.treeR = Math.max(a.tr.treeR, a.rho);
+  }
 }
 
 /** widest other (agent) run on screen, stage units (its padded extent) */
@@ -498,8 +560,14 @@ function svcInner(a: KitAgent) {
 
 function layoutAgents() {
   measureRings();
-  // depth order: parents before children (depth is small)
-  for (let d = 0; d < 6; d++) for (const a of kit.agents.values()) if (a.depth === d || (d === 5 && a.depth >= 5)) placeLocal(a);
+  // radial trees: fresh ring radii every frame (treeR feeds next frame's footprints)
+  for (const a of kit.agents.values()) if (a.depth === 0) a.rhoD.fill(0), (a.treeR = 0);
+  // depth order: parents before children (depth is small); tree wedges + ring radii per depth before placing it
+  for (let d = 0; d <= TREE_D; d++) {
+    if (d >= 2) treeWedges(d);
+    for (const a of kit.agents.values()) if (Math.min(a.depth, TREE_D) === d) placeLocal(a);
+    if (d === 1) for (const a of kit.agents.values()) if (a.depth === 0) a.treeR = a.rhoD[1];
+  }
   // run footprints (padded) + centroids
   const pad = config.preset.local.pad;
   for (const r of kit.runs.values()) r.u0 = Infinity;
@@ -850,10 +918,7 @@ const MCP_FADE_S = 0.9;
 export function kitExtents(visit: (p: THREE.Vector3, r: number) => void, agentRadius: number, agentHeight = 0) {
   const up = kit.plane === "xz" && agentHeight > 0;
   for (const a of kit.agents.values()) {
-    // a big ring's member with children (an analyst next to its market): room for them all round, kept while the
-    // member is drawn (kidsMax never shrinks), so children coming and going never re-frame the camera
-    const kids = a.depth === 1 && a.sibs >= RING_BIG && a.kidsMax > 0 ? (a.foot - FOOT) * fit.spread : 0;
-    visit(a.target, agentRadius * a.scale + kids);
+    visit(a.target, agentRadius * a.scale);
     // the camera keeps the largest agent at a sane on-screen size (FitProfile.maxNode); leaving agents don't count
     if (!a.inst.exitAt) fit.nodeR = Math.max(fit.nodeR, agentRadius * a.scale);
     // room for its decision label below and its halo label above (px-sized: world size at the fitted distance)
