@@ -176,6 +176,8 @@ Example: [examples/node-proxy](../examples/node-proxy) (a Node proxy in front of
 | `scope`     | `string`              | none       | Only show agents in this scope (a user or tenant id). Sent as the `X-AgentGlow-Scope` header, also as `scope` in the `POST /live/run` body. With a token, the token decides. |
 | `run`       | `string`              | none       | Only show this one run. Sent as the `X-AgentGlow-Run` header. |
 | `token`     | `string`              | none       | Token minted by your backend. Sent as `Authorization: Bearer <token>` on every `/live/*` request, never in a URL. |
+| `clearable` | `boolean`             | `true`     | Show the HUD's per-viewer **Clear view** button (and its Shift+C shortcut). |
+| `clearedAt` | `number \| null`      | none       | Controlled clear: an epoch-ms timestamp hides everything older for this viewer, `null` shows everything again, unset leaves it to the viewer. |
 | `style`     | `CSSProperties`       | none       | Applied to the container (set a `height` here or on a parent). |
 | `className` | `string`              | none       | Added to the container. |
 
@@ -183,6 +185,10 @@ The package also exports `THEMES` (the list of theme ids), `THEME_INFO` (names a
 `WorldEvent` type (the event contract streamed by the server).
 
 If the server exposes `POST /live/run`, the HUD shows a **Run agents** button. Otherwise the button stays hidden.
+
+**Clear view** (HUD button or Shift+C) hides everything on screen for this viewer only and then draws only new
+activity; runs still going re-appear on their next event. The server is untouched (other viewers see everything) and
+the clear survives a refresh (`localStorage`, per source / scope / run). The `cleared · show all` chip undoes it.
 
 A cross-origin `source` requires the server to send CORS headers for `/live/*` (allowing the `Authorization`
 and `X-AgentGlow-*` request headers if you use them).

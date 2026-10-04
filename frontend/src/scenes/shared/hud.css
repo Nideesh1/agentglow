@@ -19,6 +19,9 @@
 .hud-bar .hud-run { margin-top: 0; }
 .hud-info { all: unset; cursor: pointer; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font: italic 600 11px/1 Georgia, serif; color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.35); }
 .hud-info:hover, .hud-info.on { color: #e2e8f0; border-color: #818cf8; }
+.hud-clear { all: unset; cursor: pointer; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 999px; color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.35); }
+.hud-clear:hover, .hud-clear:focus-visible { color: #e2e8f0; border-color: #818cf8; }
+.hud-cleared { background: rgba(129, 140, 248, 0.2); color: #c7d2fe; }
 .hud-theme { appearance: none; background: rgba(3, 5, 11, 0.55) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%2394a3b8'/%3E%3C/svg%3E") no-repeat right 9px center; color: #cbd5e1; border: 1px solid rgba(148, 163, 255, 0.22); border-radius: 999px; font: inherit; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; padding: 4px 24px 4px 10px; cursor: pointer; outline: none; }
 .hud-theme:hover { border-color: #818cf8; }
 .hud-title { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; }

@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import { useSceneConfig } from "./config";
 import { HUD_LAYOUT_EVENT } from "./kit/fit";
 import "./hud.css";
-import { sendApproval, startLiveRun, useApproveAvailable, useRunAvailable, useRunWorkflows } from "./useSceneSetup";
+import { clearView, sendApproval, showAllView, startLiveRun, useApproveAvailable, useRunAvailable, useRunWorkflows } from "./useSceneSetup";
 import { collapseLanes, setShowAll, useLod } from "./lod";
 import { THEMES } from "../../themes";
 import { decisionTint } from "./kit/DecisionGlyph";
@@ -11,7 +11,7 @@ import { haloHover } from "./kit/HighVolume";
 import { fmtMs, gaugeText, jobStateText, metricText } from "./prims";
 import { PrimDetail } from "./PrimPanel";
 import { ResourceDetail, ServiceDetail } from "./ResourcePanel";
-import { STALE_TEXT, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, type Instance, type Run, type WorldEvent } from "./world";
+import { STALE_TEXT, useClearedAt, viewClearedAt, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, type Instance, type Run, type WorldEvent } from "./world";
 
 export const SCENES = THEMES; // theme nav = every registered theme
 
@@ -187,7 +187,8 @@ function saveSide(v: { collapsed: boolean; tab: Tab }) {
 const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 
 function HudPanels({ title, subtitle, onClose, inset, children }: { title: string; subtitle: string; selected?: string | null; onClose?: () => void; inset?: ReactNode; children?: ReactNode }) {
-  const { embedded, scope, run: runFilter } = useSceneConfig();
+  const { embedded, scope, run: runFilter, clearable = true } = useSceneConfig();
+  const clearedAt = useClearedAt();
   const canRun = useRunAvailable();
   const canApprove = useApproveAvailable();
   const w = useWorld();
@@ -209,6 +210,18 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // Shift+C: clear this viewer's view (again: show all), unless typing in a field
+  useEffect(() => {
+    if (!clearable) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.key.toLowerCase() !== "c" || (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable))) return;
+      e.preventDefault();
+      toggleClear();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [clearable]);
   const small = useRef(false);
   const topRef = useRef<HTMLDivElement>(null);
   const sideRef = useRef<HTMLElement>(null);
@@ -323,6 +336,7 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
                 {hidden.length} hidden · show
               </button>
             )}
+            {clearable && !w.unauthorized && <ClearButton clearedAt={clearedAt} />}
             {w.mode === "live" && canRun && <RunButton />}
             {!embedded && (
               <select className="hud-theme" value={here} aria-label="Theme" onChange={(e) => (location.href = `/${e.target.value}${qs}`)}>
@@ -565,6 +579,29 @@ const TOPICS = ["Why is churn rising for Acme Corp?", "Root cause of payment lat
 let topicIdx = 0;
 
 /** "scope: user-123" / "run: abc123": tells viewers they are looking at a filtered view. */
+/** Clear view toggle: clears when showing everything, shows everything again when cleared. */
+function toggleClear() {
+  if (viewClearedAt()) showAllView();
+  else clearView();
+}
+
+/** "Clear view" (per viewer; Shift+C), or the "cleared · show all" chip that undoes it. */
+function ClearButton({ clearedAt }: { clearedAt: number }) {
+  if (clearedAt) {
+    const at = new Date(clearedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return (
+      <button className="hud-badge hud-hidden hud-cleared" onClick={showAllView} title={`Showing only activity since ${at} (for you only). Click to show everything again (Shift+C)`}>
+        cleared · show all
+      </button>
+    );
+  }
+  return (
+    <button className="hud-clear" onClick={() => clearView()} title="Clear view: hide everything on screen for you only; new activity still draws (Shift+C)" aria-label="Clear view (Shift+C)">
+      Clear view
+    </button>
+  );
+}
+
 function FilterChip({ label, value }: { label: string; value: string }) {
   const short = value.length > 18 ? `${value.slice(0, 16)}…` : value;
   return (

@@ -20,6 +20,8 @@ import { AgentScene } from "agentglow";      // also imports the CSS ("agentglow
 | `scope` | | only this user's / tenant's runs (`X-AgentGlow-Scope`; with a token, the token decides) |
 | `run` | | only this run (`X-AgentGlow-Run`) |
 | `token` | | viewer token from your backend (`agentglow.make_token`), sent as `Authorization: Bearer` |
+| `clearable` | `true` | HUD "Clear view" button + Shift+C: hides everything on screen for this viewer only, then draws only new activity (runs still going re-appear on their next event); persisted per source / scope / run in localStorage; the "cleared · show all" chip undoes it. The server is untouched |
+| `clearedAt` | | controlled clear: epoch ms = clear at that moment, `null` = show everything, unset = the viewer's choice |
 | `style`, `className` | | for the container |
 
 Also exported: `THEMES`, `THEME_INFO` (names + one-liners), `type Theme`, `type AgentSceneProps`, `type WorldEvent`.

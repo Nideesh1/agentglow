@@ -29,7 +29,7 @@ import { runWorldSimulator } from "./sim";
 import { runHfSimulator } from "./simHf";
 import { createSseParser } from "./sse";
 import { mergeGalaxy, onGraphDyn, setGraphSample, type Galaxy, type GalaxyNode } from "./graphDyn";
-import { apply, hash01, resetWorld, setGraphLabel, setMode, setUnauthorized, world, type WorldEvent } from "./world";
+import { apply, clearWorldAt, hash01, resetSimLog, resetWorld, setGraphLabel, setMode, setUnauthorized, setViewClearedAt, unclearWorld, viewClearedAt, world, type WorldEvent } from "./world";
 
 export type { Galaxy, GalaxyNode };
 
@@ -172,6 +172,10 @@ type Conn = {
   served: boolean;
   events: EventGalaxy;
   growTimer: number;
+  /** localStorage key of this viewer's clear (source / scope / run; never the token) */
+  viewKey: string;
+  /** live mode: (re)open the event stream from the start (the server replays its history) */
+  restream?: () => void;
 };
 let conn: Conn | null = null;
 let runAvailable = false;
@@ -377,7 +381,11 @@ function start(c: Conn, sim: boolean | "hf") {
         }
       })
       .catch(() => {});
-    c.stop = openStream(`${c.source}/live/stream`, headers, (data) => {
+    c.restream = () => {
+      c.stop?.();
+      c.stop = openStream(`${c.source}/live/stream`, headers, onData, denied);
+    };
+    const onData = (data: string) => {
       try {
         const ev = JSON.parse(data) as WorldEvent;
         const had = world.hasGraph;
@@ -391,7 +399,8 @@ function start(c: Conn, sim: boolean | "hf") {
       } catch {
         /* ignore malformed */
       }
-    }, denied);
+    };
+    c.restream();
   })();
 }
 
@@ -421,7 +430,11 @@ function acquire(source: string, sim: boolean | "hf", auth: Auth): Conn {
   }
   // a fresh connection (first one, or a different source / scope / run / token) starts from an empty world
   resetWorld();
-  const c: Conn = { key, source, auth, refs: 1, dead: false, galaxy: EMPTY, base: EMPTY, dynTimer: 0, dynAt: 0, served: false, events: new EventGalaxy(), growTimer: 0 };
+  resetSimLog();
+  const viewKey = sim ? (sim === "hf" ? "sim:hf" : "sim") : `live:${source}|${auth.scope ?? ""}|${auth.run ?? ""}`;
+  // this viewer's persisted clear for this source / scope: the replay below respects it
+  setViewClearedAt(loadCleared(viewKey));
+  const c: Conn = { key, source, auth, refs: 1, dead: false, galaxy: EMPTY, base: EMPTY, dynTimer: 0, dynAt: 0, served: false, events: new EventGalaxy(), growTimer: 0, viewKey };
   if (sim) setSample(c, fakeGalaxy());
   conn = c;
   start(c, sim);
@@ -433,6 +446,56 @@ function release(c: Conn) {
   window.setTimeout(() => {
     if (--c.refs <= 0) teardown(c);
   }, 0);
+}
+
+const CLEAR_KEY = "agentglow.clearedAt:";
+
+function loadCleared(viewKey: string): number {
+  try {
+    const v = Number(localStorage.getItem(CLEAR_KEY + viewKey));
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveCleared(viewKey: string, at: number) {
+  try {
+    if (at > 0) localStorage.setItem(CLEAR_KEY + viewKey, String(at));
+    else localStorage.removeItem(CLEAR_KEY + viewKey);
+  } catch {
+    /* storage blocked: the clear just lasts until a refresh */
+  }
+}
+
+/** after the world was emptied: the drawn graph sample drops dynamic nodes (graphDyn was reset with the world) */
+function refreshGalaxy(c: Conn) {
+  if (c.base.nodes.length) c.galaxy = mergeGalaxy(c.base);
+  emit();
+}
+
+/**
+ * Clear view for THIS viewer (HUD button, Shift+C, `<AgentScene clearedAt>`): hide everything drawn so far and draw
+ * only events newer than `at` (epoch ms, default now). Persisted per source / scope / run in localStorage, so a
+ * refresh keeps it. The server and other viewers are untouched.
+ */
+export function clearView(at = Date.now()) {
+  clearWorldAt(at);
+  if (conn) {
+    saveCleared(conn.viewKey, at);
+    refreshGalaxy(conn);
+  }
+}
+
+/** Undo clearView(): draw everything again (live: the server's replay; sim: this session's events). */
+export function showAllView() {
+  const c = conn;
+  if (c && !c.dead) saveCleared(c.viewKey, 0);
+  if (!viewClearedAt()) return;
+  const live = !!c && !c.dead && !!c.restream && world.mode === "live";
+  unclearWorld(!live);
+  if (live) c!.restream!();
+  if (c) refreshGalaxy(c);
 }
 
 /** Trigger a run via the server's optional POST /live/run (`workflow`: one of useRunWorkflows' ids, sent only when
@@ -450,7 +513,7 @@ export async function startLiveRun(topic: string, workflow?: string): Promise<st
 }
 
 export function useSceneSetup(): Galaxy {
-  const { source, sim, scope, run, token } = useSceneConfig();
+  const { source, sim, scope, run, token, clearedAt } = useSceneConfig();
   const [galaxy, setGalaxy] = useState<Galaxy>(EMPTY);
   useEffect(() => {
     const c = acquire(source, sim, { scope: scope || undefined, run: run || undefined, token: token || undefined });
@@ -463,6 +526,13 @@ export function useSceneSetup(): Galaxy {
       release(c);
     };
   }, [source, sim, scope, run, token]);
+  // controlled clear (<AgentScene clearedAt>): a timestamp clears at it, null shows everything, undefined = viewer's choice
+  useEffect(() => {
+    if (clearedAt === undefined) return;
+    if (clearedAt && clearedAt > 0) {
+      if (viewClearedAt() !== clearedAt) clearView(clearedAt);
+    } else showAllView();
+  }, [clearedAt, source, sim, scope, run, token]);
   return galaxy;
 }
 
