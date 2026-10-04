@@ -180,7 +180,7 @@ def ingest_key_ok(keys: tuple[bytes, ...], request: Request) -> bool:
 # ---------------------------------------------------------------------- app
 def create_app(*, falkor_url: str | None = None, hub: Hub | None = None, run_webhook: str | None = None,
                run_transport=None, approve_webhook: str | None = None, secret: str | None = None, ingest_key: str | list[str] | None = None,
-               capture_prompts: bool = False) -> FastAPI:
+               capture_prompts: bool = False, run_idle_min: float | None = None) -> FastAPI:
     """`run_webhook` (or AGENTGLOW_RUN_WEBHOOK): URL that POST /live/run forwards `{topic, scope?}` to (your trigger
     endpoint); the UI shows "Run agents" only when it is set. GET /live/run proxies `GET <webhook>` for an optional
     `{workflows: [{id, label, topic}]}` listing (the UI's workflow picker). `run_transport` is an optional httpx transport (tests).
@@ -192,8 +192,11 @@ def create_app(*, falkor_url: str | None = None, hub: Hub | None = None, run_web
     `ingest_key` (or AGENTGLOW_INGEST_KEY; comma-separated for rotation): POST /v1/live, /v1/traces, /v1/events,
     /v1/claude-code and /live/topology require `x-api-key: <key>` (or `Authorization: Bearer <key>`), else 401. Unset (dev): open.
     `capture_prompts`: keep Claude Code user prompts (redacted, capped) as `chat` events. Never read from the env here:
-    only `agentglow serve` turns it on (AGENTGLOW_CAPTURE_PROMPTS=1 with a loopback --host)."""
-    hub = hub or Hub(capture_prompts=capture_prompts)
+    only `agentglow serve` turns it on (AGENTGLOW_CAPTURE_PROMPTS=1 with a loopback --host).
+    `run_idle_min` (or AGENTGLOW_RUN_IDLE_MIN, default 30, 0 = off): an open run with no events this long that is not
+    waiting (no open wait / approval / sleep, or only ones whose `until` passed) is closed as abandoned."""
+    hub = hub or Hub(capture_prompts=capture_prompts,
+                     run_idle_ms=None if run_idle_min is None else int(max(0.0, run_idle_min) * 60_000))
     falkor_url = falkor_url or os.environ.get("AGENTGLOW_FALKOR_URL")
     run_webhook = run_webhook or os.environ.get("AGENTGLOW_RUN_WEBHOOK") or None
     approve_webhook = approve_webhook or os.environ.get("AGENTGLOW_APPROVE_WEBHOOK") or None
@@ -234,7 +237,7 @@ def create_app(*, falkor_url: str | None = None, hub: Hub | None = None, run_web
         async def ticker():  # completes idle Hatchet runs (no span marks a whole workflow run's end)
             while True:
                 await asyncio.sleep(1)
-                hub.tick(now_ms())  # also ends idle Claude Code sessions' dangling spans
+                hub.tick(now_ms())  # also ends idle Claude Code sessions' dangling spans and abandoned runs (every 60 s)
 
         task = asyncio.create_task(ticker())
         yield

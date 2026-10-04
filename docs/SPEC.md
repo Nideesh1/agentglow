@@ -197,7 +197,10 @@ Unknown spans are kept only for tree/ownership. Ids: agent instance id = span id
 ### Waits and long-running runs (durable tasks)
 A run stays open while any of its spans is open, however long it is silent; only when nothing is open (and no step is
 parked, below) does the Hatchet idle grace (`AGENTGLOW_HATCHET_IDLE_MS`, default 60 s; 3 s once the run has a
-`final`) apply. Hard bound: a run with no span start/end for `AGENTGLOW_RUN_MAX_IDLE_MS` (default 24 h) completes.
+`final`) apply. Hard bound: a run with no span start/end for `AGENTGLOW_RUN_MAX_IDLE_MS` (default 24 h) completes, unless
+it is still waiting (an open wait / parked step with no `until` or one still ahead; after a passed `until` the bound
+counts from it). A silent run that is not waiting is closed much sooner as abandoned (`AGENTGLOW_RUN_IDLE_MIN`, default
+30, see "Abandoned runs").
 
 **App wait contract.** Open a span around the wait, inside the step (a child of the step span), with these attributes
 set at span start; the wait lasts while the span is open:
@@ -703,7 +706,17 @@ so every viewer agrees). Never for the backend services run, nor while the run i
 `run` status `active` (`{"type": "run", "run_id", "status": "active", "ts"}`) goes out right before the next event of an
 idle run. Both are relabel / dim only (the run stays open); replay keeps an open run's latest `idle`. Viewers dim an idle
 run's agents and show `idle · 4m` on its label. `completed` / `failed` may carry `reason` (`abandoned`: a Claude Code
-session closed for silence, below).
+session closed for silence, below, or an abandoned run).
+Abandoned runs: an open agent run with no event for `AGENTGLOW_RUN_IDLE_MIN` minutes (server env, float, default 30, `0` =
+off; also `agentglow serve --run-idle-min` and `create_app(run_idle_min=)`) whose producer is gone (process killed,
+Hatchet task cancelled, worker restarted: its spans never end) is closed server-side, checked every 60 s, so live
+viewers and replay agree: its open steps go `done`, its live agents `exit` (`done`), then `run` `completed` (or `failed`
+if a step failed) with `reason: "abandoned"`; it leaves `open_runs`, the replay snapshot and the mapper state like any
+finished run, and viewers fade it out. A waiting run is never abandoned, however old: an open wait (`agentglow.wait` /
+approval / sleep, Hatchet durable wait) or a parked step with no `until`, or with an `until` still ahead. Once every
+such deadline passed, silence counts from the latest one. Never the backend services run, nor a run of an open Claude
+Code session (`AGENTGLOW_SESSION_IDLE_MIN` closes those). A late end of one of its spans is dropped; a later new span
+with the same run id opens it again as a new run (`run` `started`).
 `step` may carry status `waiting` with `reason` (wait label) and optional `until` (epoch ms); `agent` status `waiting` may
 carry the same `reason` / `until` (see "Waits and long-running runs").
 `mcp` result events may carry `"error": true` (the MCP / backend client / lease / inference span ended with error status, an

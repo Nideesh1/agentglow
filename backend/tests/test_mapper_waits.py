@@ -91,12 +91,16 @@ def test_evicted_wait_parks_the_step_and_resume_joins_the_same_run():
     assert runs(evs) == [] and steps(evs, "approval")[-1]["status"] == "running"
 
 
-def test_hard_upper_bound_closes_a_run_stuck_in_a_wait():
+def test_hard_upper_bound_never_closes_a_run_waiting_but_closes_one_past_its_deadline():
     m = Mapper()
     m.feed("start", span("s1", "hatchet.start_step_run", None, step("approval", "sr1"), 1000))
     m.feed("start", span("w", "await approval", "s1", {"agentglow.wait": "approval"}, 1100))
-    assert tick(m, 1100 + RUN_MAX_IDLE_MS - 1) == []
-    done = tick(m, 1100 + RUN_MAX_IDLE_MS)
+    assert tick(m, 1100 + 3 * RUN_MAX_IDLE_MS) == [] and "vc-1" in m.runs  # a human approval may take a weekend
+    m = Mapper()
+    m.feed("start", span("s1", "hatchet.start_step_run", None, step("approval", "sr1"), 1000))
+    m.feed("start", span("w", "await approval", "s1", {"agentglow.wait": "approval", "agentglow.wait.until": T0 + 2000}, 1100))
+    assert tick(m, 2000 + RUN_MAX_IDLE_MS - 1) == []  # silence counts from the passed deadline
+    done = tick(m, 2000 + RUN_MAX_IDLE_MS)
     assert [e["status"] for e in runs(done)] == ["completed"] and "vc-1" not in m.runs
 
 

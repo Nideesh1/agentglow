@@ -1265,7 +1265,11 @@ function AgentDetail({ i }: { i: Instance }) {
           )}
         </h4>
         <p>{run ? run.topic : i.run}</p>
-        {run && isIdle(run) && <p className="ap-idle">{idleText(run)}</p>}
+        {run && isIdle(run) && (
+          <p className="ap-idle" title="No events for a while. A run that stays silent and is not waiting (no open wait / approval) is closed as abandoned after 30 min (server AGENTGLOW_RUN_IDLE_MIN) and fades out">
+            {idleText(run)}
+          </p>
+        )}
         {run && isStale(run) && <p className="ap-wait">{STALE_TEXT}</p>}
         {run && runWaitText(run) && <p className="ap-wait">{runWaitText(run)}</p>}
         {run && chips && (
