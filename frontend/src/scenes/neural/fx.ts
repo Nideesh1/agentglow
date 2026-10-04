@@ -97,7 +97,7 @@ void main(){
 }`;
 const tubeFrag = /* glsl */ `
 uniform vec3 uColor; uniform float uOpacity; uniform float uGrow; uniform float uTime; uniform float uSpark; uniform float uFlow;
-uniform float uHead; uniform float uTail; uniform vec3 uHeadColor;
+uniform float uHead; uniform float uTail; uniform vec3 uHeadColor; uniform float uFade;
 varying float vT; varying float vRim;
 void main(){
   if (vT > uGrow) discard;
@@ -111,7 +111,9 @@ void main(){
   }
   // directional flow: soft dashes travelling from start (parent, vT=0) to end (child, vT=1)
   float flow = uFlow * pow(max(0.0, sin((vT * 7.0 - uTime * 0.9) * 3.14159)), 6.0);
-  vec3 col = uColor * uOpacity * (core + spark * 3.5 + tip * 3.0 + flow * 2.2) + uHeadColor * head * (0.6 + vRim);
+  // brightness taper: full at the start (parent), uFade at the end (child); 1 = even
+  float fade = mix(1.0, uFade, vT);
+  vec3 col = uColor * uOpacity * (core + spark * 3.5 + tip * 3.0 + flow * 2.2) * fade + uHeadColor * head * (0.6 + vRim);
   gl_FragColor = vec4(col, 1.0);
 }`;
 
@@ -131,6 +133,7 @@ export type TubeMat = THREE.ShaderMaterial & {
     uHead: { value: number };
     uTail: { value: number };
     uHeadColor: { value: THREE.Color };
+    uFade: { value: number };
   };
 };
 export function tubeMaterial(color: THREE.ColorRepresentation = "#fff", radius = 0.06, taper = 0.4): TubeMat {
@@ -150,6 +153,7 @@ export function tubeMaterial(color: THREE.ColorRepresentation = "#fff", radius =
       uHead: { value: -1 },
       uTail: { value: 0.12 },
       uHeadColor: { value: new THREE.Color(4, 4, 4) },
+      uFade: { value: 1 },
     },
     vertexShader: tubeVert,
     fragmentShader: tubeFrag,
