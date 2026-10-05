@@ -11,6 +11,7 @@ import { haloHover } from "./kit/HighVolume";
 import { fmtMs, gaugeText, jobStateText, metricText } from "./prims";
 import { PrimDetail } from "./PrimPanel";
 import { ResourceDetail, ServiceDetail } from "./ResourcePanel";
+import { clearSearch, cycleSearch, enterSearch, focusHit, setSearch, useSearch, search, type HitKind } from "./search";
 import { STALE_TEXT, useClearedAt, viewClearedAt, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, type Instance, type Run, type WorldEvent } from "./world";
 
 export const SCENES = THEMES; // theme nav = every registered theme
@@ -1094,9 +1095,30 @@ function activeSkill(i: Instance): string {
   return i.skill;
 }
 
+const HIT_KIND: Record<HitKind, string> = { agent: "agent", run: "run", server: "server", backend: "resource", graph: "graph" };
+
+/** Scene search keys outside the box (its panel may be hidden by Selected): arrows cycle, Esc clears. */
+function useSearchKeys() {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!search.needle || e.ctrlKey || e.metaKey || e.altKey || (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable))) return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        cycleSearch(e.key === "ArrowDown" ? 1 : -1);
+      } else if (e.key === "Escape") clearSearch();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+}
+
 function AgentList() {
   const w = useWorld();
-  const [q, setQ] = useState("");
+  const s = useSearch();
+  useSearchKeys();
+  const q = s.q;
+  const cur = s.hits[s.cursor];
   const [types, setTypes] = useState<Set<string>>(new Set()); // filter by real agent name
   const [status, setStatus] = useState<StatusFilter>("alive");
   const [run, setRun] = useState("");
@@ -1140,12 +1162,45 @@ function AgentList() {
   return (
     <>
       <div className="ap-searchrow">
-        <input className="ap-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agent or run topic…" aria-label="Search agents" />
+        <input
+          className="ap-search"
+          value={q}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              cycleSearch(e.key === "ArrowDown" ? 1 : -1);
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              enterSearch();
+            } else if (e.key === "Escape") {
+              clearSearch();
+              e.currentTarget.blur();
+            }
+          }}
+          placeholder="Search agent or run topic…"
+          aria-label="Search agents, runs, servers, resources and graph nodes"
+          title="Highlights matches in the scene · Enter / click: fly there · ↑↓ next match · Esc: clear"
+        />
         <span className="ap-count" title="matching / all agents">
           {rows.length}
           {rows.length !== all.length ? ` / ${all.length}` : ""}
         </span>
       </div>
+      {s.needle && (
+        <div className="ap-hits" role="status">
+          <span className="ap-hitcount">{s.hits.length ? `${s.hits.length} in scene · Enter / ↑↓ · Esc` : "nothing in the scene matches"}</span>
+          {s.hits
+            .filter((h) => h.kind !== "agent")
+            .slice(0, 12)
+            .map((h) => (
+              <button key={`${h.kind}:${h.id}`} className={cur && cur.kind === h.kind && cur.id === h.id ? "on" : ""} onClick={() => focusHit(h)} title={`${h.label} (${h.sub})`}>
+                <em>{HIT_KIND[h.kind]}</em>
+                {h.label}
+              </button>
+            ))}
+        </div>
+      )}
       <div className="ap-chips">
         {legend.map(([name, a]) => (
           <button key={name} className={types.has(name) ? "on" : ""} aria-pressed={types.has(name)} style={{ ["--c" as string]: a.color }} onClick={() => toggleType(name)}>
@@ -1175,7 +1230,11 @@ function AgentList() {
       <ul className="ap-list">
         {shown.map((i) => (
           <li key={i.id}>
-            <button onClick={() => selectInstance(i.id)} style={{ ["--c" as string]: TYPE_COLOR[i.type] }} className={isLive(i) ? "" : "is-done"}>
+            <button
+              onClick={() => (s.needle && s.agents.has(i.id) ? focusHit({ kind: "agent", id: i.id, label: i.name, sub: "" }) : selectInstance(i.id))}
+              style={{ ["--c" as string]: TYPE_COLOR[i.type] }}
+              className={`${isLive(i) ? "" : "is-done"}${cur?.kind === "agent" && cur.id === i.id ? " is-cur" : ""}`}
+            >
               <i data-status={isLive(i) ? i.status : "done"} />
               <span className="ap-name">
                 <span className="ap-title">

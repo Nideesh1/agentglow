@@ -548,8 +548,9 @@ export const MCP_COLORS: Record<string, string> = {
   analytics: "#06b6d4",
 };
 
-/** A graph node lit by a read / write. `area`: lit for an event that named no node (no name label). */
-export type Flare = { id: number; run: string; instance: string; node: string; op: "read" | "write"; start: number; area?: boolean };
+/** A graph node lit by a read / write. `area`: lit for an event that named no node (no name label). `search`: a
+ * scene-search match kept lit (search.ts; no instance, no beam). */
+export type Flare = { id: number; run: string; instance: string; node: string; op: "read" | "write"; start: number; area?: boolean; search?: boolean };
 
 /** Finished (exit done/failed) - drawn dimmed until its run ends, then faded out with the whole run. */
 /** The label prefix of an MCP-style server: "ML" for a resource group holding only models, else "MCP". */

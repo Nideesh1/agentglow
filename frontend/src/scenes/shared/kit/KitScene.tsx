@@ -12,6 +12,7 @@ import { Hud } from "../Hud";
 import { LOD_LANES, lod, lodTick, type LodCluster } from "../lod";
 import { useSceneSetup, type Galaxy } from "../useSceneSetup";
 import { selectInstance, selectResource, tick, useHasGraph, world } from "../world";
+import { agentSearchDim, overlaySearchDim, backendSearchDim, clusterSearchDim, graphSearchDim, runSearchDim, searchTick, serverSearchDim, setSearchGalaxy } from "../search";
 import { LinkPicks, ResourcePick } from "./Picks";
 import { CrystalStyleCtx, DEFAULT_CRYSTAL, liftOf, McpCrystal, McpSatellite, type CrystalStyle } from "./Crystal";
 import { applyDim } from "./dim";
@@ -144,6 +145,7 @@ function Ticker() {
   useFrame(({ size }) => {
     const now = performance.now();
     tick(now);
+    searchTick(now);
     lodTick(now);
     kitTick(now);
     labelTick(now, size.width, size.height);
@@ -170,10 +172,28 @@ function Dim({ agent, children }: { agent: KitAgent; children: ReactNode }) {
   useFrame(() => {
     if (!g.current) return;
     const red = world.halts.size ? haltMix(agent.id) : 0;
-    applyDim(g.current, agent.dim, agent.inst.status === "failed", prev.current, red);
-    prev.current = Math.max(agent.dim, red);
+    const k = Math.max(agent.dim, agentSearchDim(agent.id));
+    applyDim(g.current, k, agent.inst.status === "failed", prev.current, red);
+    prev.current = Math.max(k, red);
   });
   return <group ref={g}>{children}</group>;
+}
+
+/** Scene search (search.ts): dims a non-agent slot subtree (run marker, MCP server / backend, cluster, side graph)
+ *  that holds no match while a query is set; `k()` = its dim amount this frame. */
+function SearchDim({ k, scope, children }: { k: () => number; scope?: LabelScopeValue["kind"]; children: ReactNode }) {
+  const g = useRef<THREE.Group>(null);
+  const prev = useRef(0);
+  const kRef = useRef(k);
+  kRef.current = k;
+  const sv = useMemo<LabelScopeValue | null>(() => (scope ? { kind: scope, dim: () => kRef.current() } : null), [scope]);
+  useFrame(() => {
+    if (!g.current) return;
+    const v = k();
+    applyDim(g.current, v, false, prev.current);
+    prev.current = v;
+  });
+  return <group ref={g}>{sv ? <LabelScope.Provider value={sv}>{children}</LabelScope.Provider> : children}</group>;
 }
 
 function Agents({ Agent, Edge, selected, onSelect, radius, height }: { Agent: ComponentType<AgentSlotProps>; Edge?: ComponentType<EdgeSlotProps>; selected: string | null; onSelect: (id: string) => void; radius: number; height: number }) {
@@ -186,19 +206,24 @@ function Agents({ Agent, Edge, selected, onSelect, radius, height }: { Agent: Co
             {Edge && a.inst.parent && <Edge child={a} />}
             <Agent agent={a} selected={selected === a.id} onSelect={onSelect} />
           </Dim>
-          <SkillSigil agent={a} radius={radius} height={height} />
-          <DecisionGlyph agent={a} radius={radius} height={height} />
-          <HaloLabel agent={a} radius={radius} height={height} />
-          <OrderChip agent={a} radius={radius} height={height} />
-          <HaltMark agent={a} radius={radius} height={height} />
-          <PrimMark agent={a} radius={radius} height={height} />
-          <EventChip agent={a} radius={radius} height={height} />
+          <SearchDim k={() => agentSearchDim(a.id)}>
+            <SkillSigil agent={a} radius={radius} height={height} />
+            <DecisionGlyph agent={a} radius={radius} height={height} />
+            <HaloLabel agent={a} radius={radius} height={height} />
+            <OrderChip agent={a} radius={radius} height={height} />
+            <HaltMark agent={a} radius={radius} height={height} />
+            <PrimMark agent={a} radius={radius} height={height} />
+            <EventChip agent={a} radius={radius} height={height} />
+          </SearchDim>
         </AgentScope>
       ))}
-      <DecisionHalos radius={radius} height={height} />
-      <Fizzles scale={radius} />
-      <PrimEdges radius={radius} />
-      <ServiceLinks radius={radius} />
+      {/* shared overlays (halos, fizzles, edges, service links): dimmed as a whole while a search is on */}
+      <SearchDim k={overlaySearchDim} scope="extra">
+        <DecisionHalos radius={radius} height={height} />
+        <Fizzles scale={radius} />
+        <PrimEdges radius={radius} />
+        <ServiceLinks radius={radius} />
+      </SearchDim>
       <LinkPicks radius={radius} />
     </>
   );
@@ -209,7 +234,9 @@ function Runs({ RunMarker }: { RunMarker: ComponentType<RunSlotProps> }) {
   return (
     <LabelScope.Provider value={SCOPE_RUN}>
       {list.map((r) => (
-        <RunMarker key={r.uid} run={r} />
+        <SearchDim key={r.uid} k={() => runSearchDim(r.id)} scope="run">
+          <RunMarker run={r} />
+        </SearchDim>
       ))}
     </LabelScope.Provider>
   );
@@ -225,7 +252,9 @@ function Mcp({ McpServer, Backend, crystal }: { McpServer?: ComponentType<McpSer
           <LabelScope.Provider value={SCOPE_MCP}>
             {McpServer && (
               <Fade item={m} lift={lift(m)} pick={<ResourcePick sel={{ type: "server", server: m.name }} r={1.0} color={m.srv.color} mix={() => m.mix} />}>
-                <McpServer mcp={m} />
+                <SearchDim k={() => serverSearchDim(m.name)} scope="mcp">
+                  <McpServer mcp={m} />
+                </SearchDim>
               </Fade>
             )}
           </LabelScope.Provider>
@@ -233,8 +262,10 @@ function Mcp({ McpServer, Backend, crystal }: { McpServer?: ComponentType<McpSer
             {Backend &&
               [...m.backends.values()].map((b) => (
                 <Fade key={b.uid} item={b} lift={lift(m)} pick={crystal ? undefined : <ResourcePick sel={{ type: "backend", server: m.name, resource: b.res.name }} r={0.55} color={m.srv.color} mix={() => b.mix * m.mix} />}>
-                  <Backend mcp={m} backend={b} />
-                  <ResourceStat mcp={m} backend={b} />
+                  <SearchDim k={() => backendSearchDim(m.name, b.res.name)} scope="backend">
+                    <Backend mcp={m} backend={b} />
+                    <ResourceStat mcp={m} backend={b} />
+                  </SearchDim>
                 </Fade>
               ))}
           </LabelScope.Provider>
@@ -315,7 +346,9 @@ function SideGraph({ galaxy, Graph }: { galaxy: Galaxy; Graph: ComponentType<Gra
   return (
     <group ref={g} scale={0.0001} visible={false}>
       <LabelScope.Provider value={SCOPE_GRAPH}>
-        <Graph galaxy={galaxy} />
+        <SearchDim k={graphSearchDim} scope="graph">
+          <Graph galaxy={galaxy} />
+        </SearchDim>
       </LabelScope.Provider>
     </group>
   );
@@ -343,6 +376,7 @@ const ORIGIN = new THREE.Vector3();
 
 export function KitScene(p: KitSceneProps) {
   const galaxy = useSceneSetup();
+  useEffect(() => setSearchGalaxy(galaxy.nodes.map((n) => n.name)), [galaxy]);
   const [selected, setSelected] = useState<string | null>(null);
   // also straight into the world: re-clicking the same agent after a resource was selected must select it again
   const onSelect = useCallback((id: string) => {
@@ -406,9 +440,11 @@ export function KitScene(p: KitSceneProps) {
             </CrystalStyleCtx.Provider>
             <Agents Agent={p.Agent} Edge={p.Edge} selected={selected} onSelect={onSelect} radius={agentRadius} height={p.plane === "xz" ? agentHeight : 0} />
             <LabelScope.Provider value={SCOPE_CLUSTER}>
-              <Clusters cluster={p.cluster} Cluster={p.Cluster} offset={p.clusterOffset} />
+              <SearchDim k={clusterSearchDim} scope="cluster">
+                <Clusters cluster={p.cluster} Cluster={p.Cluster} offset={p.clusterOffset} />
+              </SearchDim>
             </LabelScope.Provider>
-            {p.children}
+            <SearchDim k={overlaySearchDim}>{p.children}</SearchDim>
           </group>
         </GalaxyCtx.Provider>
         <OrbitControls

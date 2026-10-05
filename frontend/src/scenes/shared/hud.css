@@ -85,6 +85,12 @@
 .ap-searchrow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .ap-search { flex: 1; min-width: 0; width: 100%; box-sizing: border-box; background: rgba(3, 5, 11, 0.6); border: 1px solid rgba(148, 163, 255, 0.2); border-radius: 8px; color: inherit; font: inherit; font-size: 12px; padding: 6px 9px; outline: none; }
 .ap-search:focus { border-color: #818cf8; }
+.ap-hits { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center; }
+.ap-hitcount { flex: 1 0 100%; color: #64748b; font-size: 10.5px; }
+.ap-hits button { all: unset; cursor: pointer; font-size: 11px; color: #cbd5e1; padding: 2px 7px; border-radius: 999px; border: 1px solid rgba(148, 163, 255, 0.22); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-hits button:hover, .ap-hits button.on { background: rgba(129, 140, 248, 0.22); border-color: #818cf8; }
+.ap-hits em { font-style: normal; color: #818cf8; margin-right: 5px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.ap-list li button.is-cur { background: rgba(129, 140, 248, 0.18); }
 .ap-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .ap-chips button { all: unset; cursor: pointer; display: flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 7px; border-radius: 999px; border: 1px solid rgba(148, 163, 255, 0.15); color: #cbd5e1; }
 .ap-chips button.on { border-color: var(--c); background: color-mix(in srgb, var(--c) 18%, transparent); color: #f8fafc; }

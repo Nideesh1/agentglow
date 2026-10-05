@@ -101,6 +101,10 @@ as `preset`; do not add per-theme placement code outside it.
   automatically.
 - **Clusters** sit in the plane: lift them with `clusterOffset` on ground themes (`[0, 0.9..1.9, 0]`).
 - **One KitScene per page** (the kit is a singleton like `world`).
+- **Scene search** (`../search.ts`) dims non-matching slots through the same kit dim as finished agents, so a theme
+  gets it for free as long as it draws in its slots. Things a theme draws outside the slots (an engine like flow's
+  particles) read `agentSearchDim(id)` themselves. Do not reset `controls.target` per frame: the search fly-to
+  (`fly` in `fit.ts`) eases it.
 - Collapsed agents have no `KitAgent`: every effect keyed by agent must handle `agentLive(id) === undefined`.
 
 ## Verify

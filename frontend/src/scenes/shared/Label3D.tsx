@@ -18,6 +18,7 @@
  * it needs `troika-three-text` imported directly, which the lib build would then bundle instead of sharing
  * drei's copy - stay on drei <Text> until that's worth it.
  */
+import { agentSearchDim } from "./search";
 import { Text } from "@react-three/drei";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Suspense, useContext, useEffect, useImperativeHandle, useMemo, useRef, type ReactNode, type Ref } from "react";
@@ -643,7 +644,8 @@ function Label3DInner(props: Label3DProps) {
     const ag = scope.agent;
     // labels right in front of the camera fade out (never a giant glyph across the screen when the view passes one)
     const near = THREE.MathUtils.smoothstep(dist, NEAR_FADE[0], NEAR_FADE[1]);
-    const a = near * s.cur * s.dc * (ag ? 1 - 0.55 * ag.dim : 1) * (1 - q.depthFade * THREE.MathUtils.smoothstep(dist, q.fadeRange[0], q.fadeRange[1]));
+    const sd = ag ? agentSearchDim(ag.id) : scope.dim ? scope.dim() : 0; // scene search: non-matches dim
+    const a = near * s.cur * s.dc * (ag ? 1 - 0.55 * ag.dim : 1) * (1 - 0.6 * sd) * (1 - q.depthFade * THREE.MathUtils.smoothstep(dist, q.fadeRange[0], q.fadeRange[1]));
     if (a <= 0.004) {
       b.visible = false;
       return;

@@ -56,6 +56,34 @@ export type FitProfile = {
   maxNode: number;
 };
 
+/**
+ * Search fly-to (search.ts): while `fly.on`, FitCamera eases the orbit target to the focused point (followed while it
+ * moves) and the distance to one at which it fills ~FLY_FRAC of the viewport height, centred in the free area;
+ * flyHome() eases back to the target, distance and projection shift the fit wants. One ease of FLY_MS each way.
+ * Orbit / zoom by the user still works meanwhile (it does not change the remembered zoom factor).
+ */
+export const fly = {
+  on: false,
+  /** 0..1 progress (eased in FitCamera) */
+  k: 0,
+  get: null as null | (() => THREE.Vector3 | undefined),
+  radius: (() => 1) as () => number,
+  home: new THREE.Vector3(),
+  homeSet: false,
+  /** smoothed focus point (world) */
+  at: new THREE.Vector3(),
+};
+const FLY_MS = 900;
+const FLY_FRAC = 0.22;
+export function flyTo(get: () => THREE.Vector3 | undefined, radius: () => number) {
+  fly.get = get;
+  fly.radius = radius;
+  fly.on = true;
+}
+export function flyHome() {
+  fly.on = false;
+}
+
 /** default FitProfile.maxNode: an agent's framed diameter is at most 8% of the viewport height */
 export const MAX_NODE_FRAC = 0.08;
 
@@ -229,6 +257,7 @@ export type FitPoint = { p: THREE.Vector3; r: number };
 const _c = new THREE.Vector3();
 const _d = new THREE.Vector3();
 const _q = new THREE.Vector3();
+const _f = new THREE.Vector3();
 const _m = new THREE.Matrix4();
 /** max shift of the projection centre (fraction of the free half extent): the orbit target stays in the free area */
 const SHIFT = 0.85;
@@ -341,8 +370,9 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
       s.dur = 0;
       const tgt = controls.target ?? _c.set(0, 0, 0);
       const d = camera.position.distanceTo(tgt);
-      // remember the user's zoom relative to our fit (bounded so a wild scroll can't lock the fit out)
-      if (s.cur > 0) s.user = THREE.MathUtils.clamp(d / s.cur, 0.35, 3);
+      // remember the user's zoom relative to our fit (bounded so a wild scroll can't lock the fit out); not while
+      // the search fly-to sets the distance
+      if (s.cur > 0 && fly.k < 0.01) s.user = THREE.MathUtils.clamp(d / s.cur, 0.35, 3);
     };
     controls.addEventListener("start", onStart);
     controls.addEventListener("end", onEnd);
@@ -545,19 +575,46 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
     fit.cam.user = s.user;
     fit.cam.points = n;
 
+    // ---- search fly-to (see `fly`): orbit target -> focus point, distance -> close-up, content shift -> 0
+    const F = fly;
+    const fGoal = F.on ? 1 : 0;
+    let fe = 0;
+    if (F.k !== fGoal || F.on) {
+      if (!F.homeSet) {
+        F.home.copy(tgt);
+        F.at.copy(tgt);
+        F.homeSet = true;
+      }
+      const step = reduced ? 1 : (dt * 1000) / FLY_MS;
+      F.k = fGoal > F.k ? Math.min(1, F.k + step) : Math.max(0, F.k - step);
+      const p = F.on ? F.get?.() : undefined;
+      if (p) {
+        _f.copy(p).add(origin);
+        if (reduced) F.at.copy(_f);
+        else F.at.lerp(_f, 1 - Math.exp(-dt / 0.18));
+      }
+      fe = inOut(F.k);
+      tgt.copy(F.home).lerp(F.at, fe);
+      if (!F.on && F.k <= 0) {
+        tgt.copy(F.home);
+        F.homeSet = false;
+      }
+    }
+
     // projection centre -> centre of the free area, plus the content shift
     const cx = ins.left + freeW / 2;
     const cy = ins.top + freeH / 2;
-    const ox = W / 2 - cx + (s.sx / (tanH * camera.aspect)) * (W / 2);
-    const oy = H / 2 - cy - (s.sy / tanH) * (H / 2);
+    const ox = W / 2 - cx + ((s.sx * (1 - fe)) / (tanH * camera.aspect)) * (W / 2);
+    const oy = H / 2 - cy - ((s.sy * (1 - fe)) / tanH) * (H / 2);
     const v = camera.view;
     if (!v || !v.enabled || v.fullWidth !== W || v.fullHeight !== H || Math.abs(v.offsetX - ox) > 0.25 || Math.abs(v.offsetY - oy) > 0.25) camera.setViewOffset(W, H, ox, oy, W, H);
 
     if (s.userActive) return;
     let want = s.cur * s.user;
+    if (fe > 0) want += (Math.max(1, F.radius()) / (tanH * FLY_FRAC) - want) * fe;
     if (controls?.minDistance !== undefined) want = Math.max(want, controls.minDistance);
     if (controls?.maxDistance !== undefined && Number.isFinite(controls.maxDistance)) want = Math.min(want, controls.maxDistance);
-    if (Math.abs(want - cur) < 1e-4) return;
+    if (Math.abs(want - cur) < 1e-4 && !fe && !F.homeSet) return;
     camera.position.copy(tgt).addScaledVector(s.dir, want);
     controls?.update?.();
   });
