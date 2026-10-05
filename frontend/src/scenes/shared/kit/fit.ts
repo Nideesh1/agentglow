@@ -64,8 +64,10 @@ export type FitProfile = {
 };
 
 /**
- * Search fly-to (search.ts): while `fly.on`, FitCamera eases the orbit target to the focused point (followed while it
- * moves) and the distance to one at which it fills ~FLY_FRAC of the viewport height, centred in the free area;
+ * Search fly-to / click focus: while `fly.on`, FitCamera eases the orbit target to the focused point ONCE and then
+ * keeps it frozen (no per-frame tracking of a pulsing / easing node: no jitter); it re-targets only when the node
+ * drifts out of the central FLY_KEEP of the view. The distance (radius read once) frames it at ~FLY_FRAC of the
+ * viewport height, centred in the free area; auto-fit is suspended while focused or something is selected;
  * flyHome() eases back to the target, distance and projection shift the fit wants. One ease of FLY_MS each way.
  * Orbit / zoom by the user still works meanwhile (it does not change the remembered zoom factor).
  */
@@ -79,12 +81,19 @@ export const fly = {
   homeSet: false,
   /** smoothed focus point (world) */
   at: new THREE.Vector3(),
+  /** frozen focus goal (world) + radius, captured once per flyTo (and on a large drift) */
+  goal: new THREE.Vector3(),
+  r: 1,
+  fresh: false,
 };
 const FLY_MS = 900;
 const FLY_FRAC = 0.22;
+/** a focused node re-targets the camera only once it leaves this central fraction of the view (half extent) */
+const FLY_KEEP = 0.4;
 export function flyTo(get: () => THREE.Vector3 | undefined, radius: () => number) {
   fly.get = get;
   fly.radius = radius;
+  fly.fresh = true;
   fly.on = true;
 }
 export function flyHome() {
@@ -510,7 +519,8 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
     if (!s.lastDesired || Math.abs(desired - s.lastDesired) / s.lastDesired > 0.005) s.steadySince = now;
     s.lastDesired = desired;
     const steady = now - s.steadySince;
-    const following = s.userActive || now < s.userUntil;
+    // the user is orbiting / zooming, or a node is focused / selected: no auto-fit moves at all
+    const following = s.userActive || now < s.userUntil || fly.on || !!world.selected || !!world.selectedRes;
     // the policy picks at most one move (no per-frame closures): goTo >= 0 -> move there over goMs;
     // goDecide -> if agent size changes, resize first (the fit measured now is for the old size), then frame
     let goTo = -1;
@@ -606,8 +616,11 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
       // the user is orbiting: keep the content centred live (like before), no distance change
       bounds(B.a, n, cur);
       const k = 1 - Math.exp(-dt / 0.3);
-      s.tx = THREE.MathUtils.clamp((BX[0] + BX[1]) / 2, -hx * SHIFT, hx * SHIFT);
-      s.ty = THREE.MathUtils.clamp((BX[2] + BX[3]) / 2, -hy * SHIFT, hy * SHIFT);
+      // dead-zone: a busy cluster's bounds wobble every frame (pulses, easing); re-centre only on a real change
+      const tx = THREE.MathUtils.clamp((BX[0] + BX[1]) / 2, -hx * SHIFT, hx * SHIFT);
+      const ty = THREE.MathUtils.clamp((BX[2] + BX[3]) / 2, -hy * SHIFT, hy * SHIFT);
+      if (Math.abs(tx - s.tx) > hx * 0.04) s.tx = tx;
+      if (Math.abs(ty - s.ty) > hy * 0.04) s.ty = ty;
       s.sx += (s.tx - s.sx) * k;
       s.sy += (s.ty - s.sy) * k;
       s.fx = s.sx;
@@ -633,12 +646,23 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
         F.homeSet = true;
       }
       const step = reduced ? 1 : (dt * 1000) / FLY_MS;
-      F.k = fGoal > F.k ? Math.min(1, F.k + step) : Math.max(0, F.k - step);
+      // >= : at k = 1 while focused it must stay 1 (a ">" here dipped k every other frame: the focus jitter)
+      F.k = fGoal >= F.k ? Math.min(1, F.k + step) : Math.max(0, F.k - step);
       const p = F.on ? F.get?.() : undefined;
       if (p) {
+        // frozen goal: captured once per flyTo, re-captured only on a large drift (out of the central FLY_KEEP)
         _f.copy(p).add(origin);
-        if (reduced) F.at.copy(_f);
-        else F.at.lerp(_f, 1 - Math.exp(-dt / 0.18));
+        const half = Math.max(1, F.r) / FLY_FRAC;
+        if (F.fresh || _f.distanceTo(F.goal) > half * FLY_KEEP) {
+          F.goal.copy(_f);
+          F.r = F.radius();
+          F.fresh = false;
+        }
+      }
+      if (F.on && !F.fresh) {
+        if (reduced) F.at.copy(F.goal);
+        else if (F.at.distanceTo(F.goal) > 1e-3) F.at.lerp(F.goal, 1 - Math.exp(-dt / 0.18));
+        else F.at.copy(F.goal);
       }
       fe = inOut(F.k);
       tgt.copy(F.home).lerp(F.at, fe);
@@ -683,7 +707,7 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
       want = Math.max(want, s.hold);
       s.hold = want;
     }
-    if (fe > 0) want += (Math.max(1, F.radius()) / (tanH * FLY_FRAC) - want) * fe;
+    if (fe > 0) want += (Math.max(1, F.r) / (tanH * FLY_FRAC) - want) * fe;
     if (controls?.minDistance !== undefined) want = Math.max(want, controls.minDistance);
     if (controls?.maxDistance !== undefined && Number.isFinite(controls.maxDistance)) want = Math.min(want, controls.maxDistance);
     if (Math.abs(want - cur) < 1e-4 && !fe && !F.homeSet) return;
