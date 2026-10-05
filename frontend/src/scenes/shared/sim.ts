@@ -7,6 +7,7 @@
  * and then a deny), a quality score on the writer's draft.
  */
 import { runPrimSim } from "./simPrims";
+import { slow } from "./simSpeed";
 import { apply, setSimulated, type AgentType, type StepName, type WorldEvent } from "./world";
 
 const MAX_CONCURRENT = 3;
@@ -248,22 +249,22 @@ export function runWorldSimulator(): () => void {
           if (stopped) return;
           const out = make(performance.now());
           (Array.isArray(out) ? out : [out]).forEach(apply);
-        }, delay),
+        }, slow(delay)),
       );
     };
     const dur = scheduleRun(sched);
-    timers.push(window.setTimeout(() => (alive--, refill()), dur + 300));
+    timers.push(window.setTimeout(() => (alive--, refill()), slow(dur + 300)));
   };
   const refill = () => {
     if (stopped) return;
     while (alive < MAX_CONCURRENT) {
       const delay = 1500 + Math.random() * 3500;
       alive++; // reserve
-      timers.push(window.setTimeout(() => (alive--, startOne()), delay));
+      timers.push(window.setTimeout(() => (alive--, startOne()), slow(delay)));
     }
   };
   startOne();
-  timers.push(window.setTimeout(refill, 2500));
+  timers.push(window.setTimeout(refill, slow(2500)));
   // generic primitives (sessions, jobs, pools, backlog, ...) on a small services run
   const stopPrims = runPrimSim((ev) => !stopped && (Array.isArray(ev) ? ev : [ev]).forEach(apply));
   return () => {

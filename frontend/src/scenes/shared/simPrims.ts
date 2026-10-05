@@ -4,13 +4,14 @@
  * and a dead-letter now and then, a model pool + cache resource with stats, a named model group (ML label), a gate, a fallback, a deferred callback,
  * rejected requests, a metric and a backlog between the two services. Generic names only.
  */
+import { slow } from "./simSpeed";
 import type { WorldEvent } from "./world";
 
 export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () => void {
   const run = "services";
   const ts = () => Date.now();
   const timers: number[] = [];
-  const at = (ms: number, f: () => void) => timers.push(window.setTimeout(f, ms));
+  const at = (ms: number, f: () => void) => timers.push(window.setTimeout(f, slow(ms)));
   const API = "svc:api", WORKER = "svc:worker";
   emit([
     { type: "run", run_id: run, status: "started", topic: "services", workflow: "services", ts: ts() },
@@ -61,7 +62,7 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
     at(40_000, () => emit([{ type: "session", run_id: run, id, name: "support call", kind: "voice", phase: "end", outcome: "resolved", reason: "client_disconnect", ts: ts() }, { type: "exit", run_id: run, id, status: "done", ts: ts() }]));
   };
   session();
-  const sesT = window.setInterval(session, 46_000);
+  const sesT = window.setInterval(session, slow(46_000));
 
   // jobs: queued on the api, run on the worker with stages + progress; every 3rd retries, every 7th dead-letters
   let jn = 0;
@@ -87,7 +88,7 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
     attempt(1, 1200);
   };
   job();
-  const jobT = window.setInterval(job, 9000);
+  const jobT = window.setInterval(job, slow(9000));
 
   // steady background: pool + cache stats, inference calls, backlog, metric, capacity, rejects, callbacks, events
   let k = 0;
@@ -126,7 +127,7 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
       at(3200, () => emit({ type: "deferred", run_id: run, id: API, ref, phase: "done", label: "payment", status: "ok", from_id: WORKER, wait_ms: 3200, ts: ts() }));
     }
     if (k % 5 === 3) emit({ type: "event", run_id: run, id: API, kind: "signup", label: "plan pro", fields: { seats: 3 }, ts: ts() });
-  }, 1000);
+  }, slow(1000));
 
   return () => {
     timers.forEach(clearTimeout);
