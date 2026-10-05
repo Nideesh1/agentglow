@@ -7,8 +7,9 @@ import { THEME_LOADERS, THEMES, type Theme } from "./themes";
 
 const rel = location.pathname.startsWith(BASE) ? location.pathname.slice(BASE.length) : location.pathname.slice(1);
 const path = rel.replace(/\/+$/, "").replace(/^\/+/, "");
-// unknown paths (e.g. a removed theme like /hive) fall back to neural; "/" is the gallery
-const theme: Theme | null = !path ? null : (THEMES as readonly string[]).includes(path) ? (path as Theme) : "neural";
+// unknown paths (e.g. a removed theme like /hive) fall back to neural; "/" is the gallery, except in the hosted demo
+// where the landing page IS the neural scene running the simulator (themes stay reachable at /agentglow/<theme>/)
+const theme: Theme | null = !path ? (DEMO ? "neural" : null) : (THEMES as readonly string[]).includes(path) ? (path as Theme) : "neural";
 const Page = theme ? lazy(THEME_LOADERS[theme]) : lazy(() => import("./Gallery"));
 if (path && theme !== path) history.replaceState(null, "", `${BASE}${theme}${DEMO ? "/" : ""}${location.search}${location.hash}`);
 if (theme) document.title = `AgentGlow · ${theme}`;
