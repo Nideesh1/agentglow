@@ -35,7 +35,8 @@ export function configFromUrl(): SceneConfig {
   const flag = (k: string) => q.has(k) && !["0", "false", "no"].includes(q.get(k)!.toLowerCase());
   return {
     source: normalizeSource(q.get("source")),
-    sim: q.get("sim")?.toLowerCase() === "hf" ? "hf" : flag("sim"),
+    // static demo build (GitHub Pages): no server, always the simulator (?sim=hf still picks the market scenario)
+    sim: q.get("sim")?.toLowerCase() === "hf" ? "hf" : import.meta.env.VITE_DEMO === "1" || flag("sim"),
     hud: q.get("hud") === null ? true : flag("hud"),
     embedded: false,
     run: q.get("run")?.trim() || undefined,

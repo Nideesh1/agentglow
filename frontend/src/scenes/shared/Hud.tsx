@@ -315,7 +315,8 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
     update(back);
   };
   const open = (tab: Tab) => update({ collapsed: false, tab });
-  const here = embedded ? "" : location.pathname.replace(/\/$/, "").slice(1);
+  const base = import.meta.env.BASE_URL; // "/" or the app base (e.g. "/agentglow/" in the Pages demo)
+  const here = embedded ? "" : (location.pathname.startsWith(base) ? location.pathname.slice(base.length) : location.pathname.slice(1)).replace(/\/$/, "");
   const qs = embedded ? "" : location.search;
   const sel = getInstance(w.selected);
   const selRes = w.selectedRes;
@@ -354,7 +355,7 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
             {clearable && !w.unauthorized && <ClearButton clearedAt={clearedAt} />}
             {w.mode === "live" && canRun && <RunButton />}
             {!embedded && (
-              <select className="hud-theme" value={here} aria-label="Theme" onChange={(e) => (location.href = `/${e.target.value}${qs}`)}>
+              <select className="hud-theme" value={here} aria-label="Theme" onChange={(e) => (location.href = `${base}${e.target.value}${import.meta.env.VITE_DEMO === "1" && e.target.value ? "/" : ""}${qs}`)}>
                 <option value="">all themes</option>
                 {SCENES.map((s) => (
                   <option key={s} value={s}>

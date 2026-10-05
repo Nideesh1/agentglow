@@ -264,10 +264,15 @@ npm install
 npm run dev          # app at http://localhost:5173, proxies /live → http://localhost:8100 (AGENTGLOW_URL)
 npm run build:lib    # → dist/ (this package)
 npm run build:app    # → ../backend/agentglow/static (served by `agentglow serve`)
+npm run build:demo   # → demo-dist/: static GitHub Pages demo, base /agentglow/, simulator only (no server calls)
 ```
 
 In the app, `/` is the theme gallery and `/<theme>` is a full-screen scene. It accepts `?sim=1`, `?sim=hf`,
 `?source=http://host:8100`, `?hud=0` and `?run=<id>` (a shareable "watch this run" link). Scope and token are
 props only: they are never read from the URL.
+
+The demo build (`--mode demo`, `VITE_DEMO=1`) forces the simulator on every view, writes a copy of `index.html` per
+theme and as `404.html` (GitHub Pages has no rewrites), and shows a small "Live demo" chip. `.github/workflows/pages.yml`
+deploys it on pushes to `main`; enable it once in the repo: Settings > Pages > Source: **GitHub Actions**.
 
 MIT License

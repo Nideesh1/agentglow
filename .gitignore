@@ -25,3 +25,4 @@ graph/*.log
 backend/agentglow/static/
 backend/agentvision/
 frontend/dist/
+frontend/demo-dist/

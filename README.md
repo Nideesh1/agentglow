@@ -8,6 +8,8 @@
 [![npm](https://img.shields.io/npm/v/agentglow?color=e879f9)](https://www.npmjs.com/package/agentglow)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee)](LICENSE)
 
+**[Live demo](https://nideesh1.github.io/agentglow/)**: all 7 themes with simulated agents, right in your browser (no install).
+
 ![AgentGlow neural theme](docs/media/hero.webp)
 
 </div>
@@ -384,6 +386,10 @@ uv build --package agentglow --out-dir dist         # sdist + wheel
 | `examples/` | real agent stacks instrumented with one line |
 | `plugin/`, `skills/` | the Claude Code plugin and the agentglow skill |
 | `docs/SPEC.md` | the contract: endpoints, span -> world event mapping, attributes, privacy |
+
+Live demo: `(cd frontend && npm run build:demo)` builds the static, simulator-only app (base `/agentglow/`, no server
+calls) into `frontend/demo-dist`; `.github/workflows/pages.yml` deploys it to GitHub Pages on every push to `main`.
+One-time setup: repo Settings > Pages > Build and deployment > Source: **GitHub Actions**.
 
 Contributor notes (layout, tests, conventions, release): [CLAUDE.md](CLAUDE.md).
 

@@ -69,6 +69,7 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run build:lib && npm run build:app",
     "build:app": "tsc --noEmit && vite build",
+    "build:demo": "tsc --noEmit && vite build --mode demo",
     "build:lib": "vite build -c vite.lib.config.ts && tsc -p tsconfig.lib.json && node scripts/postbuild-lib.mjs",
     "preview": "vite preview",
     "test": "node --test cli/test/*.test.mjs",

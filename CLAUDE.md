@@ -32,6 +32,7 @@ cd frontend && npm ci
 npx tsc --noEmit -p .                                    # typecheck
 npm run build:app                                        # UI -> backend/agentglow/static (tsc + vite)
 npm run build:lib                                        # library -> frontend/dist (index, node, pulse, types)
+npm run build:demo                                       # static GitHub Pages demo (simulator only) -> frontend/demo-dist
 npm test                                                 # CLI, plugin, skill-copy and node/pulse tests (node --test)
 ```
 CI (`.github/workflows/ci.yml`) runs `npm test`, both builds, the backend tests and import checks of the examples.
