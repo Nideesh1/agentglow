@@ -1,5 +1,6 @@
 /** "/" - theme gallery for the standalone app. */
 import "./gallery.css";
+import { BASE, DEMO, REPO } from "./demo";
 import { THEME_INFO, THEMES, type Theme } from "./themes";
 
 const ACCENT: Record<Theme, [string, string]> = {
@@ -25,7 +26,7 @@ export default function Gallery() {
       <ul className="gal-grid">
         {THEMES.map((t, i) => (
           <li key={t}>
-            <a href={`/${t}${qs}`} className="gal-card" style={{ ["--a" as string]: ACCENT[t][0], ["--b" as string]: ACCENT[t][1] }}>
+            <a href={`${BASE}${t}${DEMO ? "/" : ""}${qs}`} className="gal-card" style={{ ["--a" as string]: ACCENT[t][0], ["--b" as string]: ACCENT[t][1] }}>
               <div className="gal-art" aria-hidden>
                 <span style={{ ["--d" as string]: `${i * -0.7}s` }} />
               </div>
@@ -39,8 +40,21 @@ export default function Gallery() {
         ))}
       </ul>
       <footer className="gal-foot">
-        Add <code>?sim=1</code> to any view for the built-in simulator · <code>?source=http://host:8100</code> to point at another server ·{" "}
-        <code>?hud=0</code> to hide the HUD
+        {DEMO ? (
+          <>
+            Every view here runs the built-in simulator in your browser (no server); try <a href={`${BASE}neural/?sim=hf`}>30 market agents</a> for a busy one. To watch your own agents: <code>npx agentglow setup</code> (Claude Code) or{" "}
+            <code>pip install agentglow</code>, see{" "}
+            <a href={REPO} target="_blank" rel="noopener noreferrer">
+              GitHub
+            </a>
+            .
+          </>
+        ) : (
+          <>
+            Add <code>?sim=1</code> to any view for the built-in simulator · <code>?source=http://host:8100</code> to point at another server ·{" "}
+            <code>?hud=0</code> to hide the HUD
+          </>
+        )}
       </footer>
     </main>
   );

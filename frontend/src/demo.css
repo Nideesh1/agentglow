@@ -1,0 +1,11 @@
+.demo-chip { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 8px;
+  max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px 14px; border-radius: 999px; white-space: nowrap; overflow: hidden;
+  font: 500 12px/1.3 "Public Sans", system-ui, sans-serif; color: #cbd5e1; background: rgba(10, 14, 26, 0.72);
+  border: 1px solid rgba(148, 163, 255, 0.22); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.demo-chip code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #a5b4fc; }
+.demo-chip a { color: #e8edf5; text-decoration: underline; text-underline-offset: 2px; }
+.demo-chip a:hover { color: #a5b4fc; }
+.demo-chip-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+.demo-chip-sep { color: #475569; }
+@media (max-width: 560px) { .demo-chip { white-space: normal; flex-wrap: wrap; justify-content: center; border-radius: 14px; } .demo-chip-sep { display: none; } }
+body:has(.demo-chip) .gal { padding-bottom: 76px; }
