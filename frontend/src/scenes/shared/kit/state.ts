@@ -18,12 +18,15 @@ export type KitAgent = {
   inst: Instance;
   /** the run this agent belongs to (kit run frame) */
   run: KitRun;
-  /** run-local layout coords (before centering): u along run.side, v along run.axis (world units) */
+  /** run-local layout coords (before centering): u along run.side, v along run.axis, w out of the layout plane
+   *  (along run.normal: the radial tree of subagents fills 3D space) (world units) */
   u: number;
   v: number;
-  /** eased u/v (siblings joining re-space smoothly) */
+  w: number;
+  /** eased u/v/w (siblings joining re-space smoothly) */
   eu: number;
   ev: number;
+  ew: number;
   /** stage-space home position the kit wants (re-laid out on membership change) */
   target: THREE.Vector3;
   /** eased home position (~0.6s) */
@@ -52,13 +55,16 @@ export type KitAgent = {
   foot: number;
   kidFoot: number;
   /**
-   * radial tree (layout.ts, subagents): `tr` = its depth-0 ancestor (the tree root, null for a root / not laid out),
-   * its angular wedge round the root (centre `wc`, width `ww`, run-local u/v radians; every descendant stays inside
-   * it) and its ring radius `rho` in units of the root's first ring (rx, ry). On a root: `rhoD[d]` = the ring radius
-   * of depth d this frame, `treeR` = the outermost one (last frame, sizes its footprint).
+   * spherical radial tree (layout.ts, subagents): `tr` = its depth-0 ancestor (the tree root, null for a root / not
+   * laid out), its CONE round the root (unit axis `du, dv, dw` in run-local u/v/w, full opening angle `ww` radians;
+   * every descendant stays inside it) and its shell radius `rho` in units of the root's first shell (rx, ry, and
+   * sqrt(rx * ry) out of the plane). On a root: `rhoD[d]` = the shell radius of depth d this frame, `treeR` = the
+   * outermost one (last frame, sizes its footprint).
    */
   tr: KitAgent | null;
-  wc: number;
+  du: number;
+  dv: number;
+  dw: number;
   ww: number;
   rho: number;
   rhoD: Float64Array;
@@ -97,9 +103,11 @@ export type KitRun = {
   /** eased stage-space anchor of the run group (the centre of its agents) */
   origin: THREE.Vector3;
   target: THREE.Vector3;
-  /** unit stage vectors: `axis` = direction subagents fan out, `side` = line top-level agents sit on */
+  /** unit stage vectors: `axis` = direction subagents fan out, `side` = line top-level agents sit on, `normal` =
+   *  out of the layout plane (the third axis of the 3D subagent trees) */
   axis: THREE.Vector3;
   side: THREE.Vector3;
+  normal: THREE.Vector3;
   /** eased layout angle of the axis in the 2D layout plane (radians, ccw from screen-right) */
   angle: number;
   targetAngle: number;
@@ -202,6 +210,10 @@ export type Kit = typeof kit;
 /** 2D layout coords (a = screen-right, b = screen-up) to a stage-space point on the kit plane. */
 export function planePoint(a: number, b: number, out: THREE.Vector3) {
   return kit.plane === "xy" ? out.set(a, b, 0) : out.set(a, 0, -b);
+}
+/** Unit stage normal of the kit plane (out of the 2D layout: +z on "xy", up on "xz"). */
+export function planeNormal(out: THREE.Vector3) {
+  return kit.plane === "xy" ? out.set(0, 0, 1) : out.set(0, 1, 0);
 }
 /** Stage point to 2D layout coords (a, b). */
 export function planeA(p: THREE.Vector3) {

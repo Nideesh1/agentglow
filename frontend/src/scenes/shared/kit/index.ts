@@ -66,7 +66,7 @@
  *
  *  See PORTING.md for the step-by-step recipe to port a theme.
  */
-export { kit, kitSummary, reduced, agentLive, serverPos, backendPos, runLocal, graphToStage, stageToGraph, planePoint, planeA, planeB } from "./state";
+export { kit, kitSummary, reduced, agentLive, serverPos, backendPos, runLocal, graphToStage, stageToGraph, planePoint, planeNormal, planeA, planeB } from "./state";
 export type { Plane, KitAgent, KitRun, KitMcp, KitBackend, KitGraph } from "./state";
 export { PRESETS, radial, drift, clusterCellSize } from "./presets";
 export type { LayoutPreset, LocalStyle, PresetCtx, PresetName } from "./presets";

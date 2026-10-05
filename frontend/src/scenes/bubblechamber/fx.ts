@@ -388,13 +388,20 @@ export function runDepthTarget(index: number, count: number) {
   return (order / (count - 1) - 0.5) * span;
 }
 
-/** home depth of an agent: its run's depth plus a stable per-agent offset (subagents scatter more) */
-export function agentDepth(a: KitAgent) {
+/** depth of a top-level agent: its run's depth plus a small stable per-agent scatter */
+function topDepth(a: KitAgent) {
   const rz = runDepth.get(a.run.id)?.z ?? 0;
   const h = hash01(a.id, 77) - 0.5;
-  // scatter scales with the drum: subagents fill a good part of its length round their run, top-level agents less
-  const amp = Math.max(a.inst.parent ? 2 : 1.2, tank.hz * (a.inst.parent ? 0.34 + 0.05 * Math.min(2, a.depth - 1) : 0.14));
-  const z = rz + h * 2 * amp * Math.max(0.85, Math.min(1.2, fit.spread));
+  const amp = Math.max(1.2, tank.hz * 0.14);
+  return rz + h * 2 * amp * Math.max(0.85, Math.min(1.2, fit.spread));
+}
+/**
+ * home depth of an agent: a top-level agent at its run's depth plus a stable scatter; a subagent at its tree root's
+ * depth plus its out-of-plane offset in the kit's 3D radial tree (eased `ew`), so subtrees fill the drum in 3D and
+ * straight lineage lines still never cross
+ */
+export function agentDepth(a: KitAgent) {
+  const z = a.depth > 0 && a.tr ? topDepth(a.tr) + a.ew : topDepth(a);
   const lim = Math.max(0.5, tank.hz - 1.1);
   return z < -lim ? -lim : z > lim ? lim : z;
 }

@@ -178,8 +178,10 @@ export function Chamber() {
     const c = kit.core;
     const rx = c.hw + 0.9;
     const ry = c.hh + 0.9;
-    // a deep drum: orbiting to the side shows a real volume, not a coin
-    const hz = THREE.MathUtils.clamp(0.72 * Math.min(rx, ry), 5, 13);
+    // a deep drum: orbiting to the side shows a real volume, not a coin; deep enough for the 3D subagent trees
+    let wMax = 0;
+    for (const a of kit.agents.values()) wMax = Math.max(wMax, Math.abs(a.w));
+    const hz = Math.max(THREE.MathUtils.clamp(0.72 * Math.min(rx, ry), 5, 13), wMax + 2);
     const k = init.current ? Math.min(1, delta * 2.5) : 1;
     init.current = true;
     tank.rx += (rx - tank.rx) * k;

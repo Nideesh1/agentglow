@@ -33,7 +33,7 @@ as `preset`; do not add per-theme placement code outside it.
      depend on size in a group you move in useFrame (`-0.8 * agent.scale`). Overlaps are handled by the kit
      (`labels.ts`): every Label3D is ranked by the slot it renders in and hidden / shortened when it collides;
      override the class with `declutter="run" | "mcp" | ...` or opt out with `declutter={false}`.
-   - parent edge: parent position = `agentLive(inst.parent)`; subagents form a radial tree round their top-level agent (each child owns a wedge its whole subtree stays in, one concentric ring per depth), so draw the edge STRAIGHT from parent to child: straight edges never cross (no trunk along `agent.run.axis`, no bow).
+   - parent edge: parent position = `agentLive(inst.parent)`; subagents form a 3D spherical radial tree round their top-level agent (each child owns a cone its whole subtree stays in, one sphere shell per depth, `agent.pos` is off the layout plane along `agent.run.normal`), so draw the edge STRAIGHT in 3D from parent to child: straight edges never cross (no trunk along `agent.run.axis`, no bow).
    - delete the theme's list component (`Somas`, `Blips`, `Network`): the kit renders one slot per drawn agent,
      keyed by `agent.uid` (collapsed-then-expanded agents get a fresh object).
 3. **RunMarker slot** (`{ run }`): auras, lines, sector arcs, run labels. Frame: `run.origin`, `run.axis` (fan
