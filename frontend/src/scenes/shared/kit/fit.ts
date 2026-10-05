@@ -26,7 +26,14 @@
  *   clipped    content (or a framed label) that ends up under a HUD panel / off the canvas at the current framing
  *              (it grew or moved within the bands) counts as "needs zoom-out": same batch window, one move that
  *              also re-centres the projection shift.
- *   user       orbit / zoom / pan suspends auto-refit for USER_HOLD_MS (the user's zoom factor is kept).
+ *   user       orbit / zoom / pan suspends auto-refit for USER_HOLD_MS (the user's zoom factor is kept). A manual
+ *              zoom OUT sticks: auto-fit may re-centre or zoom further out, but never pulls the camera back in past
+ *              the user's distance, until "Fit all" (F, HUD button, double-click on empty space) resets it.
+ *   fit all    fitAll(): frames EVERYTHING (every run, cluster, graph sphere, MCP server; not capped by
+ *              FitProfile.maxRadius), drops the user's zoom factor and ends a search fly-to; auto-fit then keeps
+ *              framing everything.
+ *   limits     OrbitControls.maxDistance follows the content (>= 400, 4x the committed fit, 2x the fit-all distance),
+ *              so neither the user nor auto-fit hits a fixed cap; camera.far and scene fog follow a manual zoom-out.
  *   resize     re-fits quickly (RESIZE_MS); reduced motion snaps.
  */
 import { useFrame, useThree } from "@react-three/fiber";
@@ -57,8 +64,10 @@ export type FitProfile = {
 };
 
 /**
- * Search fly-to (search.ts): while `fly.on`, FitCamera eases the orbit target to the focused point (followed while it
- * moves) and the distance to one at which it fills ~FLY_FRAC of the viewport height, centred in the free area;
+ * Search fly-to / click focus: while `fly.on`, FitCamera eases the orbit target to the focused point ONCE and then
+ * keeps it frozen (no per-frame tracking of a pulsing / easing node: no jitter); it re-targets only when the node
+ * drifts out of the central FLY_KEEP of the view. The distance (radius read once) frames it at ~FLY_FRAC of the
+ * viewport height, centred in the free area; auto-fit is suspended while focused or something is selected;
  * flyHome() eases back to the target, distance and projection shift the fit wants. One ease of FLY_MS each way.
  * Orbit / zoom by the user still works meanwhile (it does not change the remembered zoom factor).
  */
@@ -72,17 +81,33 @@ export const fly = {
   homeSet: false,
   /** smoothed focus point (world) */
   at: new THREE.Vector3(),
+  /** frozen focus goal (world) + radius, captured once per flyTo (and on a large drift) */
+  goal: new THREE.Vector3(),
+  r: 1,
+  fresh: false,
 };
 const FLY_MS = 900;
 const FLY_FRAC = 0.22;
+/** a focused node re-targets the camera only once it leaves this central fraction of the view (half extent) */
+const FLY_KEEP = 0.4;
 export function flyTo(get: () => THREE.Vector3 | undefined, radius: () => number) {
   fly.get = get;
   fly.radius = radius;
+  fly.fresh = true;
   fly.on = true;
 }
 export function flyHome() {
   fly.on = false;
 }
+
+/** "Fit all" requests (F, HUD button, double-click on empty space); FitCamera serves them on its next frame. */
+export const fitAllReq = { n: 0 };
+export function fitAll() {
+  fitAllReq.n++;
+  flyHome();
+}
+/** OrbitControls.maxDistance never goes below this */
+export const MIN_MAX_DISTANCE = 400;
 
 /** default FitProfile.maxNode: an agent's framed diameter is at most 8% of the viewport height */
 export const MAX_NODE_FRAC = 0.08;
@@ -293,7 +318,10 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
   const controls = useThree((s) => s.controls) as unknown as Controls | null;
   const gl = useThree((s) => s.gl);
   const size = useThree((s) => s.size);
+  const scene = useThree((s) => s.scene);
   const st = useRef({
+    // user zoom-out floor (absolute distance; 0 = none), fit-all mode, served fitAll request, fit-all distance
+    hold: 0, all: false, req: fitAllReq.n, fullD: 0, fullAt: -1e9, far0: 0, fog0: null as null | { near: number; far: number },
     base: 0, user: 1, userActive: false, userUntil: -1e9, want: 0, lastMeasure: -1e9, hudMoved: false, dir: new THREE.Vector3(), aspect: 1.6, refit: true,
     // committed move: fitted distance (before the user factor) + projection shift tween from -> to
     cur: 0, from: 0, t0: 0, dur: 0, sx: 0, sy: 0, fx: 0, fy: 0, tx: 0, ty: 0,
@@ -372,7 +400,11 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
       const d = camera.position.distanceTo(tgt);
       // remember the user's zoom relative to our fit (bounded so a wild scroll can't lock the fit out); not while
       // the search fly-to sets the distance
-      if (s.cur > 0 && fly.k < 0.01) s.user = THREE.MathUtils.clamp(d / s.cur, 0.35, 3);
+      // zooming OUT has no upper bound here (maxDistance bounds it) and sticks (`hold`) until Fit all
+      if (s.cur > 0 && fly.k < 0.01) {
+        s.user = Math.max(0.35, d / s.cur);
+        s.hold = s.user > 1.02 ? d : 0;
+      }
     };
     controls.addEventListener("start", onStart);
     controls.addEventListener("end", onEnd);
@@ -449,6 +481,27 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
       // never so close that an agent gets huge (a lone service node as a sun filling half the screen): diameter
       // 2r over a viewport height 2 * d * tanH stays <= maxNode. Only a floor: wide content already sits further out.
       if (fit.nodeR > 0 && P.maxNode > 0) desired = Math.max(desired, Math.min(maxD, fit.nodeR / (tanH * P.maxNode)));
+      // fit-all distance: everything framed, no maxRadius cap (throttled; always fresh for a Fit all request)
+      if (now - s.fullAt > 250 || fitAllReq.n !== s.req) {
+        s.fullAt = now;
+        s.fullD = Math.max(desired, fullFit(B.a, n, maxD, P.margin, hx, hy));
+      }
+      if (s.all) desired = Math.max(desired, s.fullD);
+    }
+    // Fit all: drop the user's zoom (from where the camera is now) and frame everything in one move
+    let forced = false;
+    if (fitAllReq.n !== s.req) {
+      s.req = fitAllReq.n;
+      if (s.cur > 0) {
+        s.cur = s.from = s.want = cur;
+        s.dur = 0;
+      }
+      s.user = 1;
+      s.hold = 0;
+      s.all = true;
+      s.userUntil = -1e9;
+      s.phase2 = 0;
+      forced = !!n;
     }
     // content (or a label) outside the free area as framed now: under a HUD panel or off the canvas. Counts as
     // "needs zoom-out" (batched like any zoom-out), and the move re-centres the projection shift.
@@ -466,14 +519,18 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
     if (!s.lastDesired || Math.abs(desired - s.lastDesired) / s.lastDesired > 0.005) s.steadySince = now;
     s.lastDesired = desired;
     const steady = now - s.steadySince;
-    const following = s.userActive || now < s.userUntil;
+    // the user is orbiting / zooming, or a node is focused / selected: no auto-fit moves at all
+    const following = s.userActive || now < s.userUntil || fly.on || !!world.selected || !!world.selectedRes;
     // the policy picks at most one move (no per-frame closures): goTo >= 0 -> move there over goMs;
     // goDecide -> if agent size changes, resize first (the fit measured now is for the old size), then frame
     let goTo = -1;
     let goMs = 0;
     let goDecide = false;
     if (!n) s.framed = false;
-    if (!s.want || s.refit) {
+    if (forced) {
+      goTo = desired;
+      goMs = OUT_MS;
+    } else if (!s.want || s.refit) {
       goTo = desired;
       goMs = s.want ? RESIZE_MS : 0;
       s.refit = false;
@@ -559,8 +616,11 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
       // the user is orbiting: keep the content centred live (like before), no distance change
       bounds(B.a, n, cur);
       const k = 1 - Math.exp(-dt / 0.3);
-      s.tx = THREE.MathUtils.clamp((BX[0] + BX[1]) / 2, -hx * SHIFT, hx * SHIFT);
-      s.ty = THREE.MathUtils.clamp((BX[2] + BX[3]) / 2, -hy * SHIFT, hy * SHIFT);
+      // dead-zone: a busy cluster's bounds wobble every frame (pulses, easing); re-centre only on a real change
+      const tx = THREE.MathUtils.clamp((BX[0] + BX[1]) / 2, -hx * SHIFT, hx * SHIFT);
+      const ty = THREE.MathUtils.clamp((BX[2] + BX[3]) / 2, -hy * SHIFT, hy * SHIFT);
+      if (Math.abs(tx - s.tx) > hx * 0.04) s.tx = tx;
+      if (Math.abs(ty - s.ty) > hy * 0.04) s.ty = ty;
       s.sx += (s.tx - s.sx) * k;
       s.sy += (s.ty - s.sy) * k;
       s.fx = s.sx;
@@ -586,12 +646,23 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
         F.homeSet = true;
       }
       const step = reduced ? 1 : (dt * 1000) / FLY_MS;
-      F.k = fGoal > F.k ? Math.min(1, F.k + step) : Math.max(0, F.k - step);
+      // >= : at k = 1 while focused it must stay 1 (a ">" here dipped k every other frame: the focus jitter)
+      F.k = fGoal >= F.k ? Math.min(1, F.k + step) : Math.max(0, F.k - step);
       const p = F.on ? F.get?.() : undefined;
       if (p) {
+        // frozen goal: captured once per flyTo, re-captured only on a large drift (out of the central FLY_KEEP)
         _f.copy(p).add(origin);
-        if (reduced) F.at.copy(_f);
-        else F.at.lerp(_f, 1 - Math.exp(-dt / 0.18));
+        const half = Math.max(1, F.r) / FLY_FRAC;
+        if (F.fresh || _f.distanceTo(F.goal) > half * FLY_KEEP) {
+          F.goal.copy(_f);
+          F.r = F.radius();
+          F.fresh = false;
+        }
+      }
+      if (F.on && !F.fresh) {
+        if (reduced) F.at.copy(F.goal);
+        else if (F.at.distanceTo(F.goal) > 1e-3) F.at.lerp(F.goal, 1 - Math.exp(-dt / 0.18));
+        else F.at.copy(F.goal);
       }
       fe = inOut(F.k);
       tgt.copy(F.home).lerp(F.at, fe);
@@ -609,9 +680,34 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
     const v = camera.view;
     if (!v || !v.enabled || v.fullWidth !== W || v.fullHeight !== H || Math.abs(v.offsetX - ox) > 0.25 || Math.abs(v.offsetY - oy) > 0.25) camera.setViewOffset(W, H, ox, oy, W, H);
 
+    // limits follow the content: the user can always zoom out past everything, auto-fit never hits the cap
+    if (controls) {
+      const md = Math.max(MIN_MAX_DISTANCE, 4 * s.want * Math.max(1, s.user), 2 * s.fullD, s.hold * 1.5);
+      if (controls.maxDistance === undefined || Math.abs(controls.maxDistance - md) / md > 0.02) controls.maxDistance = md;
+    }
+    if (!s.far0) s.far0 = camera.far;
+    const far = Math.max(s.far0, cur * 2.5 + s.fullD);
+    if (Math.abs(camera.far - far) / far > 0.05) {
+      camera.far = far;
+      camera.updateProjectionMatrix();
+    }
+    // scene fog (theme depth cue) slides back by however far the user zoomed out beyond the fit
+    const fog = scene.fog as THREE.Fog | null;
+    if (fog && "near" in fog) {
+      if (!s.fog0) s.fog0 = { near: fog.near, far: fog.far };
+      const extra = Math.max(0, cur - s.cur);
+      fog.near = s.fog0.near + extra;
+      fog.far = s.fog0.far + extra;
+    }
+
     if (s.userActive) return;
     let want = s.cur * s.user;
-    if (fe > 0) want += (Math.max(1, F.radius()) / (tanH * FLY_FRAC) - want) * fe;
+    // a manual zoom-out sticks: auto-fit may move further out, never back in past the user's distance
+    if (s.hold > 0) {
+      want = Math.max(want, s.hold);
+      s.hold = want;
+    }
+    if (fe > 0) want += (Math.max(1, F.r) / (tanH * FLY_FRAC) - want) * fe;
     if (controls?.minDistance !== undefined) want = Math.max(want, controls.minDistance);
     if (controls?.maxDistance !== undefined && Number.isFinite(controls.maxDistance)) want = Math.min(want, controls.maxDistance);
     if (Math.abs(want - cur) < 1e-4 && !fe && !F.homeSet) return;
@@ -619,6 +715,22 @@ export function FitCamera({ points, origin }: { points: (visit: (p: THREE.Vector
     controls?.update?.();
   });
   return null;
+}
+
+/** smallest distance at which ALL points fit (no maxRadius cap), searched up from `start` */
+function fullFit(a: Float64Array, n: number, start: number, m: number, hx: number, hy: number) {
+  let hi = Math.max(1, start);
+  while (!spans(a, n, hi, m, hx, hy) && hi < 1e6) hi *= 2;
+  let lo = hi / 2;
+  if (spans(a, n, lo, m, hx, hy)) {
+    lo = 0.5;
+  }
+  for (let it = 0; it < 22; it++) {
+    const mid = (lo + hi) / 2;
+    if (spans(a, n, mid, m, hx, hy)) hi = mid;
+    else lo = mid;
+  }
+  return hi;
 }
 
 /** screen bounds in tangent units [minX, maxX, minY, maxY] of camera-space points seen from distance d */
@@ -709,4 +821,4 @@ function framedPoints() {
   return out;
 }
 
-if (typeof window !== "undefined") (window as unknown as { __agentglowFit?: typeof fit & { framedPoints: typeof framedPoints; clipReport: typeof clipReport } }).__agentglowFit = Object.assign(fit, { framedPoints, clipReport });
+if (typeof window !== "undefined") (window as unknown as { __agentglowFit?: typeof fit & { framedPoints: typeof framedPoints; clipReport: typeof clipReport; fly: typeof fly; camera: () => THREE.PerspectiveCamera | undefined } }).__agentglowFit = Object.assign(fit, { framedPoints, clipReport, fly, camera: () => dbg?.camera });

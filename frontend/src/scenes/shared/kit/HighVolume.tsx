@@ -20,6 +20,7 @@ import * as THREE from "three";
 import { Label3D, type Label3DHandle } from "../Label3D";
 import { flashMix, HALO_CATS, HALO_COLORS, haloMix, hash01, isSvc, ORDER_LIFE_MS, orderText, presence, selectInstance, svcIdle, world, type OrderUse } from "../world";
 import { fit } from "./fit";
+import { focusAgent } from "./focus";
 import { labels } from "./labels";
 import { kit, reduced, type KitAgent } from "./state";
 
@@ -286,7 +287,7 @@ function HaloLabelOn({ agent, radius, height }: { agent: KitAgent; radius: numbe
   return (
     <group ref={g} visible={false}>
       <Label3D ref={l} text="" color="#5eead4" textColor={TEXT} size={HL.size} pxRange={HL.px} anchorY="bottom" plate="none" font="mono" opacity={0} fadeMs={0} glow={1} renderOrder={25} declutter="skill" fit
-        onClick={(e) => g.current?.visible && (e.stopPropagation(), selectInstance(agent.id))}
+        onClick={(e) => g.current?.visible && (e.stopPropagation(), selectInstance(agent.id), focusAgent(agent.id))}
         onHover={(over) => setHaloHover(over && g.current?.visible ? agent.id : null)} />
     </group>
   );

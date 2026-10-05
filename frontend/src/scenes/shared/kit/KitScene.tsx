@@ -11,12 +11,13 @@ import { ClusterBalls, type ClusterBallProps, type ClusterColor } from "../Clust
 import { Hud } from "../Hud";
 import { LOD_LANES, lod, lodTick, type LodCluster } from "../lod";
 import { useSceneSetup, type Galaxy } from "../useSceneSetup";
-import { selectInstance, selectResource, tick, useHasGraph, world } from "../world";
+import { selectInstance, tick, useHasGraph, world } from "../world";
 import { agentSearchDim, overlaySearchDim, backendSearchDim, clusterSearchDim, graphSearchDim, runSearchDim, searchTick, serverSearchDim, setSearchGalaxy } from "../search";
 import { LinkPicks, ResourcePick } from "./Picks";
 import { CrystalStyleCtx, DEFAULT_CRYSTAL, liftOf, McpCrystal, McpSatellite, type CrystalStyle } from "./Crystal";
 import { applyDim } from "./dim";
-import { FitCamera, setFitProfile, type FitProfile } from "./fit";
+import { FitCamera, fitAll, setFitProfile, type FitProfile } from "./fit";
+import { focusAgent, unfocus } from "./focus";
 import { LabelScope, labels, labelTick, type LabelScopeValue } from "./labels";
 import { config, kitExtents, kitTick } from "./layout";
 import { SkillSigil } from "./SkillSigil";
@@ -101,6 +102,8 @@ export type KitSceneProps = {
   hudInset?: ReactNode;
 };
 
+/** click vs double-click on empty space: a single click waits this long before unselecting */
+const DBL_MS = 260;
 const GalaxyCtx = createContext<Galaxy>({ nodes: [], links: [] });
 /** The session's graph sample inside a KitScene (empty until the session has a graph). */
 export const useKitGalaxy = () => useContext(GalaxyCtx);
@@ -382,7 +385,26 @@ export function KitScene(p: KitSceneProps) {
   const onSelect = useCallback((id: string) => {
     setSelected(id);
     selectInstance(id);
+    focusAgent(id);
   }, []);
+  // empty space: a click unselects + flies home, a double-click is Fit all (the click waits to see which).
+  // R3F only reports a miss for a real click (pointer moved <= 2px), so orbit drags never unselect.
+  const missT = useRef(0);
+  const unselect = useCallback(() => {
+    setSelected(null);
+    unfocus();
+  }, []);
+  useEffect(() => () => clearTimeout(missT.current), []);
+  // Esc unselects too (not while typing in a field: the search box has its own Esc)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== "Escape" || (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable))) return;
+      unselect();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [unselect]);
 
   // theme config -> kit (idempotent, set before the first frame)
   config.preset = typeof p.preset === "string" ? PRESETS[p.preset] : p.preset;
@@ -423,9 +445,11 @@ export function KitScene(p: KitSceneProps) {
         camera={{ position: p.camera.position, fov: p.camera.fov ?? 46, near: p.camera.near ?? 0.1, far: p.camera.far ?? 600 }}
         dpr={[1, 2]}
         gl={{ antialias: false, powerPreference: "high-performance", ...p.gl }}
-        onPointerMissed={() => {
-          setSelected(null);
-          selectResource(null);
+        onPointerMissed={(e) => {
+          clearTimeout(missT.current);
+          // double-click on empty space: Fit all (frame everything, drop the user zoom)
+          if (e.type === "dblclick") fitAll();
+          else if (e.type === "click") missT.current = window.setTimeout(unselect, DBL_MS);
         }}
       >
         {p.bg && <color attach="background" args={[p.bg]} />}
@@ -454,7 +478,6 @@ export function KitScene(p: KitSceneProps) {
           dampingFactor={0.06}
           enablePan={false}
           minDistance={2}
-          maxDistance={400}
           {...ctl}
         />
         <FitCamera points={points} origin={ORIGIN} />

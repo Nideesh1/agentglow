@@ -1,7 +1,7 @@
 /** Shared glass HUD for every scene: top bar (title, mode, theme, live totals) + right sidebar (Agents | Events | Selected). */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useSceneConfig } from "./config";
-import { HUD_LAYOUT_EVENT } from "./kit/fit";
+import { fitAll, HUD_LAYOUT_EVENT } from "./kit/fit";
 import "./hud.css";
 import { clearView, sendApproval, showAllView, startLiveRun, useApproveAvailable, useRunAvailable, useRunWorkflows } from "./useSceneSetup";
 import { collapseLanes, setShowAll, useLod } from "./lod";
@@ -223,6 +223,17 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [clearable]);
+  // F: Fit all (frame everything on screen, drop the user zoom), unless typing in a field
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.toLowerCase() !== "f" || (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable))) return;
+      e.preventDefault();
+      fitAll();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const small = useRef(false);
   const topRef = useRef<HTMLDivElement>(null);
   const sideRef = useRef<HTMLElement>(null);
@@ -337,6 +348,9 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
                 {hidden.length} hidden · show
               </button>
             )}
+            <button className="hud-clear" onClick={fitAll} title="Fit all: frame everything on screen and reset your zoom (F, or double-click empty space)" aria-label="Fit all (F)">
+              Fit all
+            </button>
             {clearable && !w.unauthorized && <ClearButton clearedAt={clearedAt} />}
             {w.mode === "live" && canRun && <RunButton />}
             {!embedded && (
