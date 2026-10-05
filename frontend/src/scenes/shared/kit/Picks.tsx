@@ -11,6 +11,7 @@ import { resInfo, sameSel, type ResSel } from "../resinfo";
 import { selectResource, world } from "../world";
 import { useKitList } from "./KitScene";
 import { agentLive, kit } from "./state";
+import { focusResource } from "./focus";
 
 /** the hovered target (one at a time) */
 let hovered: ResSel | null = null;
@@ -44,6 +45,7 @@ function handlers(sel: ResSel, live: () => boolean) {
       if (!live() || yields(sel, e)) return;
       e.stopPropagation();
       selectResource(sel);
+      focusResource(sel);
     },
     onPointerOver: (e: ThreeEvent<PointerEvent>) => {
       if (!live() || yields(sel, e)) return;

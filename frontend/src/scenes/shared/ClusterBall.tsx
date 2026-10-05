@@ -13,6 +13,7 @@ import * as THREE from "three";
 import { Label3D, type Label3DHandle } from "./Label3D";
 import { TYPE_COLOR, type AgentType } from "./world";
 import { LOD_LANES, expandLane, lod, type LodCluster } from "./lod";
+import { focusCluster } from "./kit/focus";
 
 export type ClusterStyle = "orb" | "stars" | "swarm";
 
@@ -239,6 +240,7 @@ export function ClusterBall({ cluster, position, place, color, radius = 1.4, var
 
   const click = (ev?: { stopPropagation?: () => void }) => {
     ev?.stopPropagation?.();
+    focusCluster(cluster.lane);
     (onClick ?? expandLane)(cluster.lane);
   };
   const over = (v: boolean) => {

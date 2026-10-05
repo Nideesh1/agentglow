@@ -797,4 +797,4 @@ function framedPoints() {
   return out;
 }
 
-if (typeof window !== "undefined") (window as unknown as { __agentglowFit?: typeof fit & { framedPoints: typeof framedPoints; clipReport: typeof clipReport } }).__agentglowFit = Object.assign(fit, { framedPoints, clipReport });
+if (typeof window !== "undefined") (window as unknown as { __agentglowFit?: typeof fit & { framedPoints: typeof framedPoints; clipReport: typeof clipReport; fly: typeof fly; camera: () => THREE.PerspectiveCamera | undefined } }).__agentglowFit = Object.assign(fit, { framedPoints, clipReport, fly, camera: () => dbg?.camera });
