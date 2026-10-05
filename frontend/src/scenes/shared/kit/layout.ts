@@ -659,6 +659,22 @@ function targetLocal(r: KitRun, u: number, v: number, w: number, out: THREE.Vect
   return out.copy(r.target).addScaledVector(_w, u - r.tcu).addScaledVector(_v, v - r.tcv).addScaledVector(planeNormal(_x), w);
 }
 
+/**
+ * Top-level objects (runs, grouped clusters, MCP servers + their backends, the side graph) are placed by the preset
+ * in the 2D layout plane, then lifted out of it (along the plane normal) by LIFT x their in-plane distance from the
+ * centre, with a golden-angle sign / amount per index: a ring of runs becomes a 3D shell instead of a flat disc.
+ * The in-plane (a, b) slot is unchanged, so 3D gaps are never smaller than the preset's 2D gaps (no new overlaps),
+ * and the lift only depends on the slot index (stable).
+ */
+const LIFT = 0.8;
+const _n = new THREE.Vector3();
+function liftW(i: number, a: number, b: number, salt: number) {
+  return Math.hypot(a, b) * LIFT * Math.cos((i + salt) * GOLDEN + 0.9);
+}
+function lift(out: THREE.Vector3, w: number) {
+  return out.addScaledVector(planeNormal(_n), w);
+}
+
 const a2 = (p: THREE.Vector3) => p.x;
 const b2 = (p: THREE.Vector3) => (kit.plane === "xy" ? p.y : -p.z);
 
@@ -690,6 +706,7 @@ function layoutRuns() {
       slot.b -= Math.abs(Math.sin(slot.angle)) * r.hv + Math.abs(Math.cos(slot.angle)) * r.hu + 1.5;
     }
     planePoint(slot.a, slot.b, r.target);
+    lift(r.target, liftW(i, slot.a, slot.b, 0));
     r.targetAngle = slot.angle;
   }
 }
@@ -726,6 +743,7 @@ function layoutPeriphery() {
     const lane = activeLanes[k];
     P.cluster(lane, k, activeLanes.length, ctx, pt);
     planePoint(pt.a, pt.b, kit.clusterTarget[lane]);
+    lift(kit.clusterTarget[lane], liftW(k, pt.a, pt.b, 3));
     hw = Math.max(hw, Math.abs(pt.a) + 2.4);
     hh = Math.max(hh, Math.abs(pt.b) + 2.4);
   }
@@ -787,6 +805,14 @@ function layoutPeriphery() {
     column(RIGHT, 1, hw + gap, 0);
     column(LEFT, -1, hw + gap, graphOn && wide ? R * 2 + 3.5 : 0);
   }
+  // out of the plane (see LIFT): each server with its backends, and the side graph
+  for (let j = 0; j < servers.length; j++) {
+    const m = servers[j];
+    const w = liftW(j, a2(m.target), b2(m.target), 5);
+    lift(m.target, w);
+    for (const be of m.backends.values()) lift(be.target, w);
+  }
+  if (graphOn) lift(g.target, liftW(0, a2(g.target), b2(g.target), 8));
   if (graphOn && g.target.lengthSq() > 1e-6) g.out.copy(g.target).normalize();
 }
 const SERVERS: KitMcp[] = [];

@@ -16,7 +16,7 @@ import { agentSearchDim, overlaySearchDim, backendSearchDim, clusterSearchDim, g
 import { LinkPicks, ResourcePick } from "./Picks";
 import { CrystalStyleCtx, DEFAULT_CRYSTAL, liftOf, McpCrystal, McpSatellite, type CrystalStyle } from "./Crystal";
 import { applyDim } from "./dim";
-import { FitCamera, setFitProfile, type FitProfile } from "./fit";
+import { FitCamera, fitAll, setFitProfile, type FitProfile } from "./fit";
 import { LabelScope, labels, labelTick, type LabelScopeValue } from "./labels";
 import { config, kitExtents, kitTick } from "./layout";
 import { SkillSigil } from "./SkillSigil";
@@ -423,7 +423,9 @@ export function KitScene(p: KitSceneProps) {
         camera={{ position: p.camera.position, fov: p.camera.fov ?? 46, near: p.camera.near ?? 0.1, far: p.camera.far ?? 600 }}
         dpr={[1, 2]}
         gl={{ antialias: false, powerPreference: "high-performance", ...p.gl }}
-        onPointerMissed={() => {
+        onPointerMissed={(e) => {
+          // double-click on empty space: Fit all (frame everything, drop the user zoom)
+          if (e.type === "dblclick") fitAll();
           setSelected(null);
           selectResource(null);
         }}
@@ -454,7 +456,6 @@ export function KitScene(p: KitSceneProps) {
           dampingFactor={0.06}
           enablePan={false}
           minDistance={2}
-          maxDistance={400}
           {...ctl}
         />
         <FitCamera points={points} origin={ORIGIN} />

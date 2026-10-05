@@ -1,7 +1,7 @@
 {
   "name": "agentglow",
   "displayName": "AgentGlow",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Watch Claude Code, its subagents and tool calls live in 3D. Async HTTP hooks post to a local AgentGlow server (port 8100), which starts with each session.",
   "author": {
     "name": "Nideesh1",
