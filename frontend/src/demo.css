@@ -9,3 +9,19 @@
 .demo-chip-sep { color: #475569; }
 @media (max-width: 560px) { .demo-chip { white-space: normal; flex-wrap: wrap; justify-content: center; border-radius: 14px; } .demo-chip-sep { display: none; } }
 body:has(.demo-chip) .gal { padding-bottom: 76px; }
+.demo-chip-btn { font: inherit; color: #e8edf5; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.demo-chip-btn:hover { color: #a5b4fc; }
+.demo-install { position: fixed; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 1001; width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 120px); overflow: auto; box-sizing: border-box; padding: 12px 14px; border-radius: 14px;
+  font: 500 12px/1.4 "Public Sans", system-ui, sans-serif; color: #cbd5e1; background: rgba(10, 14, 26, 0.92);
+  border: 1px solid rgba(148, 163, 255, 0.25); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.demo-install-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; color: #e8edf5; margin-bottom: 6px; }
+.demo-install-x { background: none; border: 0; color: #94a3b8; font-size: 18px; cursor: pointer; line-height: 1; }
+.demo-install-way { padding: 8px 0; border-top: 1px solid rgba(148, 163, 255, 0.12); }
+.demo-install-title { font-weight: 700; color: #e8edf5; margin-bottom: 4px; }
+.demo-install-line { display: flex; align-items: center; gap: 8px; justify-content: space-between; margin: 2px 0; }
+.demo-install-line code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #a5b4fc; overflow-x: auto; white-space: nowrap; }
+.demo-install-line button { flex: none; font: 600 10px system-ui, sans-serif; color: #cbd5e1; background: rgba(148, 163, 255, 0.12);
+  border: 1px solid rgba(148, 163, 255, 0.25); border-radius: 6px; padding: 2px 6px; cursor: pointer; }
+.demo-install-line button:hover { color: #fff; }
+.demo-install-note { color: #94a3b8; font-size: 11px; margin-top: 2px; }
