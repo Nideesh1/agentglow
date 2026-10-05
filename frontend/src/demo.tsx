@@ -15,10 +15,10 @@ export function DemoChip() {
   return (
     <aside className="demo-chip" aria-label="About this demo">
       <span className="demo-chip-dot" aria-hidden />
-      <span>Live demo with simulated agents</span>
+      <span>Simulated demo</span>
       <span className="demo-chip-sep" aria-hidden>·</span>
       <span>
-        Install: <code>npx agentglow setup</code>
+        <code>npx agentglow setup</code>
       </span>
       <span className="demo-chip-sep" aria-hidden>·</span>
       <a href={REPO} target="_blank" rel="noopener noreferrer">

@@ -1,5 +1,5 @@
-.demo-chip { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 8px;
-  max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px 14px; border-radius: 999px; white-space: nowrap; overflow: hidden;
+.demo-chip { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 8px;
+  max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px 14px; border-radius: 999px; flex-wrap: wrap; justify-content: center; text-align: center;
   font: 500 12px/1.3 "Public Sans", system-ui, sans-serif; color: #cbd5e1; background: rgba(10, 14, 26, 0.72);
   border: 1px solid rgba(148, 163, 255, 0.22); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 .demo-chip code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #a5b4fc; }
