@@ -46,7 +46,8 @@ longer than its eviction TTL (default 15 min): the task is cancelled, so the wai
 unset) and the step restarts later with the same step run id. A step that ends with its wait (within PARK_SLACK_MS)
 therefore stays `waiting` (parked) until a step starts again; a parked run is held until the wait's deadline + the idle
 grace, else until RUN_MAX_IDLE_MS. Only when nothing is open and nothing is parked does the idle grace apply. Any run
-with no span activity for RUN_MAX_IDLE_MS (default 24 h) is completed so nothing leaks. Child workflow runs
+with no span activity for RUN_MAX_IDLE_MS (default 24 h) is completed so nothing leaks, except one still waiting (an
+open wait / parked step with no deadline or one still ahead: a human approval may take a weekend). Child workflow runs
 (`hatchet.parent_workflow_run_id` of a run still open, or a step span whose OTel parent, the traceparent the SDK injects
 when a task triggers it, is in another open Hatchet run) fold into their parent run as subagents of the agent that
 triggered them; parallel instances of one step name (fan-out) keep the step `running` until the last one ends.
@@ -107,7 +108,7 @@ log = logging.getLogger("agentglow")
 # run is over. Complete quickly once the run has produced its final answer, otherwise only after a long quiet period.
 HATCHET_GRACE_MS = int(os.environ.get("AGENTGLOW_HATCHET_IDLE_MS", "60000"))
 HATCHET_FINAL_GRACE_MS = 3000
-# hard upper bound: a run with no span activity for this long completes even with open spans / waits
+# hard upper bound: a run with no span activity for this long completes even with open spans (not while it waits)
 RUN_MAX_IDLE_MS = int(os.environ.get("AGENTGLOW_RUN_MAX_IDLE_MS", str(24 * 3600 * 1000)))
 BECAUSE_MS = 30_000  # an approval wait starting this soon after its agent's guard decision links it
 DECISIONS_KEPT = 2000
@@ -430,8 +431,12 @@ class Mapper:
                 del r.park_pending[step]
                 reason, until = r.parked[step]
                 out.append(self._step_wait_ev(r.id, step, reason, until, now_ms))
-            if (r.done_at is not None and now_ms >= r.done_at) or (r.last_ts and now_ms - r.last_ts >= RUN_MAX_IDLE_MS):
+            if r.done_at is not None and now_ms >= r.done_at:
                 self._complete(r, now_ms, out)
+            elif r.last_ts and now_ms - r.last_ts >= RUN_MAX_IDLE_MS:
+                hold = self.wait_hold(r.id, now_ms)  # waiting: never; past a wait's deadline: counted from it
+                if hold is not None and now_ms - max(r.last_ts, hold) >= RUN_MAX_IDLE_MS:
+                    self._complete(r, now_ms, out)
         return out
 
     def quiet_runs(self) -> set[str]:
@@ -441,6 +446,39 @@ class Mapper:
         for s in self.spans.values():
             if s.end is None and ("agentglow.session" in s.attrs or "agentglow.job.id" in s.attrs):
                 out.add(s.run)
+        return out
+
+    def wait_hold(self, run_id: str, now: int) -> int | None:
+        """Abandoned-run rule (Hub, AGENTGLOW_RUN_IDLE_MIN): None = the run is waiting on purpose (an open wait or a
+        parked step with no deadline, or one still ahead), never abandoned. Otherwise the epoch ms silence counts
+        from at the earliest: the latest deadline that already passed (0 = no wait at all)."""
+        run = self.runs.get(run_id)
+        if run is None:
+            return 0
+        untils = [w.wait[1] for w in run.waits.values()] + [u for _, u in run.parked.values()]
+        if any(u is None or u > now for u in untils):
+            return None
+        return max(untils, default=0)
+
+    def abandon(self, run_id: str, ts: int) -> list[dict]:
+        """Close an open run whose producer is gone (no events for AGENTGLOW_RUN_IDLE_MIN, not waiting): the same
+        events a finished run gets (open steps done, live agents exit, `final`, `run` completed / failed) with
+        `reason` "abandoned", and its state is freed. Later spans of that run id map as a new run."""
+        run = self.runs.get(run_id)
+        if run is None or run.service:
+            return []
+        out: list[dict] = []
+        for step in list(run.step_open):
+            out.append({"type": "step", "run_id": run_id, "step": step, "status": "done", "ts": ts})
+        for k, ag in list(self.agents.items()):
+            if ag.run == run_id and not ag.done and k != run.synthetic:
+                ag.done = True
+                out.append({"type": "exit", "run_id": run_id, "id": k, "status": "done", "ts": ts})
+        for k, s in self.spans.items():  # a late end of one of its open spans is dropped (no flash of a new run)
+            if s.run == run_id and s.end is None:
+                self.seen_ended[k] = None
+        run.reason = "abandoned"
+        self._complete(run, ts, out)
         return out
 
     # ------------------------------------------------------------------ lifecycle

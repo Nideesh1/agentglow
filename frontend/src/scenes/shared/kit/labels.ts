@@ -20,7 +20,8 @@ export type LabelKind = "decision" | "agent" | "skill" | "run" | "mcp" | "resour
 const KIND_PRIO: Record<LabelKind, number> = { decision: 20000, agent: 600, skill: 450, run: 400, mcp: 300, resource: 290, cluster: 250, backend: 150, graph: 140, extra: 120, sub: 100 };
 
 /** Which slot a label is rendered in (set by <KitScene>); `agent` lets the pass rank agent labels by activity. */
-export type LabelScopeValue = { kind: LabelKind; agent?: KitAgent };
+/** `dim`: scene-search dim of the slot (search.ts), 0..1 this frame; agent labels use the agent's own */
+export type LabelScopeValue = { kind: LabelKind; agent?: KitAgent; dim?: () => number };
 export const LabelScope = createContext<LabelScopeValue>({ kind: "extra" });
 
 export type LabelEntry = {

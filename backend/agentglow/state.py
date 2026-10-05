@@ -39,10 +39,13 @@ class Sub:
 
 
 IDLE_DIM_MIN = 3.0  # default AGENTGLOW_IDLE_DIM_MIN: an open agent run with no events this long is shown idle
+RUN_IDLE_MIN = 30.0  # default AGENTGLOW_RUN_IDLE_MIN: an open agent run silent this long (not waiting) is abandoned
+ABANDON_EVERY_MS = 60_000  # how often the abandoned-run check runs
 
 
 class Hub:
-    def __init__(self, buffer: int | None = None, capture_prompts: bool = False, idle_ms: int | None = None) -> None:
+    def __init__(self, buffer: int | None = None, capture_prompts: bool = False, idle_ms: int | None = None,
+                 run_idle_ms: int | None = None) -> None:
         self.mapper = Mapper()
         self.claude_code = ClaudeCodeAdapter(capture_prompts=capture_prompts)
         # replay buffer (events); AGENTGLOW_BUFFER overrides the default (small values exercise the snapshot path)
@@ -60,6 +63,10 @@ class Hub:
         self.idle_ms = idle_ms if idle_ms is not None else env_ms("AGENTGLOW_IDLE_DIM_MIN", IDLE_DIM_MIN)
         self.activity: dict[str, int] = {}  # run id -> wall clock ms of its latest published event
         self.idle: set[str] = set()
+        # abandoned runs: an open agent run silent for run_idle_ms (0 = off) and not waiting on purpose is closed
+        # (its producer was killed: its spans will never end). Checked every ABANDON_EVERY_MS from tick().
+        self.run_idle_ms = run_idle_ms if run_idle_ms is not None else env_ms("AGENTGLOW_RUN_IDLE_MIN", RUN_IDLE_MIN)
+        self.abandon_at = 0  # next check (ms)
         self.clock = lambda: int(time.time() * 1000)  # activity clock (tests replace it)
 
     # ---- ingest (every path scrubs spans here: identity keys, raw prompts and secrets never reach events)
@@ -111,6 +118,27 @@ class Hub:
         self.publish(self.mapper.tick(now_ms))
         self._ingest_cc(self.claude_code.tick(now_ms))
         self.publish(self._idle_tick(now_ms))
+        if now_ms >= self.abandon_at:
+            self.abandon_at = now_ms + ABANDON_EVERY_MS
+            self.publish(self._abandon_tick(now_ms))
+
+    # ---- abandoned runs
+    def _abandon_tick(self, now: int) -> list[dict]:
+        """Close open agent runs with no event for run_idle_ms that are not waiting (Mapper.wait_hold: an open wait
+        with no deadline or one still ahead keeps a run forever; a passed deadline counts as silence from then).
+        Never the services run, nor a run of an open Claude Code session (AGENTGLOW_SESSION_IDLE_MIN closes those)."""
+        if not self.run_idle_ms:
+            return []
+        cc = {t.run_id for s in self.claude_code.sessions.values() for t in (s.turn, *s.turns) if t}
+        out: list[dict] = []
+        for rid, run in list(self.mapper.runs.items()):
+            if run.service or rid in cc:
+                continue
+            last = self.activity.setdefault(rid, now)  # never published (yet): its silence starts now
+            hold = self.mapper.wait_hold(rid, now)
+            if hold is not None and now - max(last, hold) >= self.run_idle_ms:
+                out += self.mapper.abandon(rid, now)
+        return out
 
     # ---- idle runs
     def _idle_tick(self, now: int) -> list[dict]:

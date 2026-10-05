@@ -5,7 +5,8 @@
  * Once the world gets crowded (hysteresis: group at > GROUP_ON alive agents, ungroup at < GROUP_OFF) we keep
  * a few "focus" runs fully expanded and fold every other run of the same LANE (run.slot % LOD_LANES) into
  * one cluster per lane:
- *   - focus runs = the selected agent's run, runs of a lane the user clicked (expandLane), then the most
+ *   - focus runs = the selected agent's run and runs holding a scene-search match (search.ts), runs of a lane the
+ *     user clicked (expandLane), then the most
  *     recently started runs, until ~BUDGET expanded agents. Expanded runs stay expanded for ≥ DWELL_MS so
  *     the view doesn't churn while new runs keep arriving.
  *   - labels only for the ~LABEL_K busiest expanded agents + the selected one (`showLabel`)
@@ -18,6 +19,7 @@
  * shows the "grouped: N runs in K clusters · show all" chip (Hud.tsx).
  */
 import { useSyncExternalStore } from "react";
+import { search } from "./search";
 import { RUN_COLORS, energy, hash01, isDismissed, isLive, linger, world, type AgentType, type Instance, FADE_MS } from "./world";
 
 /** Number of visual lanes runs are grouped by (most themes lay runs out by slot % 6). */
@@ -110,6 +112,7 @@ let lastRecompute = -1e9;
 let lastFrame = -1;
 let dirty = true;
 let lastSelected: string | null = null;
+let lastSearch = 0;
 let lastSize = -1;
 
 const subs = new Set<() => void>();
@@ -243,7 +246,8 @@ function recompute(now: number) {
     const r = world.runs.get(id);
     const lane = laneOfRun(id);
     const sticky = expRuns.has(id) && now - (expSince.get(id) ?? 0) < DWELL_MS;
-    const p = id === selRun ? 0 : lod.expandedLane === lane ? 1 : sticky ? 2 : (runAlive.get(id) ?? 0) > 0 ? 3 : 4;
+    // a run holding a scene-search match is expanded like the selected one (search.ts)
+    const p = id === selRun || search.focusRuns.has(id) ? 0 : lod.expandedLane === lane ? 1 : sticky ? 2 : (runAlive.get(id) ?? 0) > 0 ? 3 : 4;
     prio.set(id, p);
     started.set(id, r?.startedAt ?? 0);
     runOrder.push(id);
@@ -386,6 +390,10 @@ export function lodTick(now = performance.now()) {
   lastFrame = now;
   if (world.selected !== lastSelected) {
     lastSelected = world.selected;
+    dirty = true;
+  }
+  if (search.version !== lastSearch) {
+    lastSearch = search.version;
     dirty = true;
   }
   const size = world.instances.size;

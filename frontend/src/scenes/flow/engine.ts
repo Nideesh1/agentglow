@@ -17,6 +17,7 @@
 import * as THREE from "three";
 import type { Galaxy } from "../shared/useSceneSetup";
 import { DYN_MAX, graphView } from "../shared/graphDyn";
+import { agentSearchDim } from "../shared/search";
 import { mcpGlow,
   KIND_COLOR,
   slotStatus,
@@ -1263,10 +1264,11 @@ export class FlowEngine {
       const implode = xAge >= 0 ? Math.pow(s.p, 1.6) : s.p;
       const ls = fit.scale;
       const sc = (implode * (1 + s.e * 0.45 + wob) + xFlash * 0.9 + birth * 0.6) * ls;
-      _c.setRGB(s.r, s.g, s.b).multiplyScalar(1.3 + s.bright * 1.5 + s.e * 1.1);
+      const sd = 1 - 0.75 * agentSearchDim(s.id); // scene search: a non-matching eddy dims (search.ts)
+      _c.setRGB(s.r, s.g, s.b).multiplyScalar((1.3 + s.bright * 1.5 + s.e * 1.1) * sd);
       _c.lerp(_c2.setRGB(4, 4, 4), Math.min(1, birth + xFlash));
       this.setInst(this.cores, si, s.x, s.y, s.z, sc, _c, t * s.omega * 0.3, t * s.omega, 0);
-      _c.setRGB(s.r, s.g, s.b);
+      _c.setRGB(s.r, s.g, s.b).multiplyScalar(sd);
       glow(si, s.x, s.y, s.z, _c, (0.3 + s.bright * 0.4 + s.e * 0.5 + birth * 2 + xFlash * 2.5) * s.p + xFlash, (5 + s.e * 4 + birth * 10 + xFlash * 14) * Math.max(s.p, xFlash) * ls);
     }
     if (sel) {

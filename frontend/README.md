@@ -186,6 +186,11 @@ The package also exports `THEMES` (the list of theme ids), `THEME_INFO` (names a
 
 If the server exposes `POST /live/run`, the HUD shows a **Run agents** button. Otherwise the button stays hidden.
 
+**Scene search**: the Agents panel's search box also drives the scene in every theme. Matching agents, runs, MCP
+servers, resources and graph nodes stay bright while everything else dims (grouped runs holding a match expand);
+Enter or a click on a result flies the camera to it and opens its details, ArrowUp / ArrowDown cycle the matches,
+Esc clears the search and flies the camera back.
+
 **Clear view** (HUD button or Shift+C) hides everything on screen for this viewer only and then draws only new
 activity; runs still going re-appear on their next event. The server is untouched (other viewers see everything) and
 the clear survives a refresh (`localStorage`, per source / scope / run). The `cleared · show all` chip undoes it.

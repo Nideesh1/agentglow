@@ -1,4 +1,4 @@
-"""`agentglow serve [--host 0.0.0.0] [--port 8100] [--falkor URL] [--secret S] [--ingest-key K]`"""
+"""`agentglow serve [--host 0.0.0.0] [--port 8100] [--falkor URL] [--secret S] [--ingest-key K] [--run-idle-min M]`"""
 from __future__ import annotations
 
 import argparse
@@ -35,6 +35,9 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--ingest-key", default=os.environ.get("AGENTGLOW_INGEST_KEY"),
                    help="span producers must send `x-api-key: K` to the ingest endpoints; comma-separated keys for "
                         "rotation (env AGENTGLOW_INGEST_KEY)")
+    s.add_argument("--run-idle-min", type=float, default=None,
+                   help="close an open run as abandoned after this many minutes without events, unless it is waiting "
+                        "(env AGENTGLOW_RUN_IDLE_MIN, default 30, 0 = off)")
     args = ap.parse_args(argv)
     if args.cmd != "serve":
         ap.print_help()
@@ -68,7 +71,7 @@ def main(argv: list[str] | None = None) -> None:
             log.warning("agentglow: listening on %s without --ingest-key / AGENTGLOW_INGEST_KEY: anyone who can reach "
                         "it can post spans. Set an ingest key before exposing this beyond localhost.", args.host)
     uvicorn.run(create_app(falkor_url=args.falkor, secret=args.secret, ingest_key=args.ingest_key,
-                           capture_prompts=capture), host=args.host,
+                           capture_prompts=capture, run_idle_min=args.run_idle_min), host=args.host,
                 port=args.port, log_level="warning")
 
 

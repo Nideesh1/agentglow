@@ -325,7 +325,8 @@ shared server never receives prompts. `npx agentglow status` shows `prompts: cap
 | gates / capacity / rejections | lock badge (`locked · 2 left`), `cap 3/4`, amber flash for a 429 / 503 that is backpressure |
 | lifecycle | tint ring: blue loading / warming, amber degraded, grey draining, red fatal; a pulse on restart |
 | business events | chips next to the node, like orders |
-| quiet runs (no events for 3 min, not waiting) | dimmed, labelled `idle · 4m`; bright again on the next event. `×` in the Selected panel hides a run for you; **Clear view** (Shift+C) hides everything on screen for you and keeps drawing only new activity |
+| scene search | type in the Agents panel's search box: matching agents, runs, MCP servers, resources and graph nodes stay bright, everything else dims (in every theme); Enter or a click flies the camera there and opens its details, ↑↓ cycle matches, Esc clears and flies back |
+| quiet runs (no events for 3 min, not waiting) | dimmed, labelled `idle · 4m`; bright again on the next event. After 30 min of silence (`AGENTGLOW_RUN_IDLE_MIN`) a run that is not waiting (its process was killed, its spans never end) is closed as abandoned and fades out; a run on an open wait / approval never is. `×` in the Selected panel hides a run for you; **Clear view** (Shift+C) hides everything on screen for you and keeps drawing only new activity |
 
 **A Claude Code ball stays after its terminal closed?** A killed session sends no SessionEnd: it dims as idle after
 3 min (`AGENTGLOW_IDLE_DIM_MIN`) and closes as abandoned after 10 min of silence (`AGENTGLOW_SESSION_IDLE_MIN`; 30 =

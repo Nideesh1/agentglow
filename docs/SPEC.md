@@ -197,7 +197,10 @@ Unknown spans are kept only for tree/ownership. Ids: agent instance id = span id
 ### Waits and long-running runs (durable tasks)
 A run stays open while any of its spans is open, however long it is silent; only when nothing is open (and no step is
 parked, below) does the Hatchet idle grace (`AGENTGLOW_HATCHET_IDLE_MS`, default 60 s; 3 s once the run has a
-`final`) apply. Hard bound: a run with no span start/end for `AGENTGLOW_RUN_MAX_IDLE_MS` (default 24 h) completes.
+`final`) apply. Hard bound: a run with no span start/end for `AGENTGLOW_RUN_MAX_IDLE_MS` (default 24 h) completes, unless
+it is still waiting (an open wait / parked step with no `until` or one still ahead; after a passed `until` the bound
+counts from it). A silent run that is not waiting is closed much sooner as abandoned (`AGENTGLOW_RUN_IDLE_MIN`, default
+30, see "Abandoned runs").
 
 **App wait contract.** Open a span around the wait, inside the step (a child of the step span), with these attributes
 set at span start; the wait lasts while the span is open:
@@ -703,7 +706,17 @@ so every viewer agrees). Never for the backend services run, nor while the run i
 `run` status `active` (`{"type": "run", "run_id", "status": "active", "ts"}`) goes out right before the next event of an
 idle run. Both are relabel / dim only (the run stays open); replay keeps an open run's latest `idle`. Viewers dim an idle
 run's agents and show `idle · 4m` on its label. `completed` / `failed` may carry `reason` (`abandoned`: a Claude Code
-session closed for silence, below).
+session closed for silence, below, or an abandoned run).
+Abandoned runs: an open agent run with no event for `AGENTGLOW_RUN_IDLE_MIN` minutes (server env, float, default 30, `0` =
+off; also `agentglow serve --run-idle-min` and `create_app(run_idle_min=)`) whose producer is gone (process killed,
+Hatchet task cancelled, worker restarted: its spans never end) is closed server-side, checked every 60 s, so live
+viewers and replay agree: its open steps go `done`, its live agents `exit` (`done`), then `run` `completed` (or `failed`
+if a step failed) with `reason: "abandoned"`; it leaves `open_runs`, the replay snapshot and the mapper state like any
+finished run, and viewers fade it out. A waiting run is never abandoned, however old: an open wait (`agentglow.wait` /
+approval / sleep, Hatchet durable wait) or a parked step with no `until`, or with an `until` still ahead. Once every
+such deadline passed, silence counts from the latest one. Never the backend services run, nor a run of an open Claude
+Code session (`AGENTGLOW_SESSION_IDLE_MIN` closes those). A late end of one of its spans is dropped; a later new span
+with the same run id opens it again as a new run (`run` `started`).
 `step` may carry status `waiting` with `reason` (wait label) and optional `until` (epoch ms); `agent` status `waiting` may
 carry the same `reason` / `until` (see "Waits and long-running runs").
 `mcp` result events may carry `"error": true` (the MCP / backend client / lease / inference span ended with error status, an
@@ -741,4 +754,15 @@ one per (agent, resource) per 250 ms on the server, so counts there are a lower 
 ## Frontend (`frontend/`, npm `agentglow`)
 - App build: gallery at `/`, `/<theme>`; data source = same origin `/live/stream` (`?source=<url>` override, `?sim=1` simulator, `?sim=hf` high-frequency simulator (30 market agents, ~100 decisions/s, paper orders), `?hud=0` hide HUD, `?run=<id>` one run). Output copied to `backend/agentglow/static/`.
 - Library build: `export { AgentScene, THEMES, THEME_INFO }` + types `AgentSceneProps`, `Theme`, `WorldEvent` - `<AgentScene theme="neural" source="http://…:8100" hud={true} sim={false|true|"hf"} scope run token clearable={true} clearedAt style className />`; react/react-dom are peerDependencies; ships types. Extra entries: `agentglow/node` (Node.js `watch()`, `spanProcessor()`; see "Backend services") and `agentglow/pulse` (flat events), both without React / three.js; `agentglow/style.css`.
+- Scene search (per viewer, client only, every theme: shared kit `scenes/shared/search.ts`): the Agents panel's search
+  box matches agents (id, name, run topic, graph nodes they touched; services included), runs (topic), MCP servers /
+  resource groups, their resources (satellites) and graph nodes of the session's sample, case-insensitive substring.
+  While it matches something, everything else is dimmed (kit dim on agent / run / server / backend / cluster / side
+  graph slots and their labels; shared overlays a bit less), matching graph nodes are kept lit with the theme's own
+  graph flare, and runs holding a match are expanded out of their LOD cluster (up to 8). The agent list keeps
+  filtering as before; non-agent matches show as chips under the box. Enter (first match or the current one), a click
+  on a result or ArrowUp / ArrowDown (cycle, wraps; also while the Selected panel is open, not while typing in another
+  field) fly the camera to that match (orbit target + distance eased over ~0.9 s, following it while it moves) and open
+  its Selected / Resource details (a run selects its top agent; a graph node only flies to the side graph). Esc clears
+  the search and the highlight and eases the camera back. `window.__agentglowSearch` exposes the state (read-only).
 - Clear view (per viewer, client only; the server and other viewers are untouched, nothing is deleted): the HUD's **Clear view** button (or Shift+C, not while typing in a field) hides everything drawn so far: runs, agents, services, MCP servers, graph glow, the event list, and resets the counters to 0 for display. From then on only events with `ts >= clearedAt` (epoch ms of the click) draw; older ones (the replay on page load, late arrivals) are dropped by the world reducer, except `mcp_register` / `graph_nodes` (metadata that draws nothing). A run or agent still open at the clear (or opened before it in a replay) re-appears on its next newer event, as if it started then (its earlier history stays hidden). The timestamp is persisted in `localStorage` (`agentglow.clearedAt:<live:source|scope|run>` or `sim` / `sim:hf`; never the token; storage errors ignored), so a refresh keeps the cleared view. While cleared the HUD shows a `cleared · show all` chip (Shift+C again): live mode re-reads the server's replay, sim mode replays this session's events (last 50k). `clearable={false}` hides the button and the shortcut; `clearedAt` (epoch ms) clears at that moment, `null` shows everything, `undefined` (default) leaves it to the viewer.
