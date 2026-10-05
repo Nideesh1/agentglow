@@ -4,7 +4,7 @@
  * The kit maps the 2D plane onto the theme's stage plane ("xy" or "xz"), centres every run on its anchor,
  * scales spacing by fit.spread and frames the camera. A preset never sees instances; only counts and extents.
  *
- *   radial  runs on a ring around the centre (1 run = centred); subagents form a radial tree round their top-level agent (layout.ts: wedges, one ring per depth).
+ *   radial  runs on a ring around the centre (1 run = centred); subagents form a radial tree round their top-level agent (layout.ts: 3D, a cone per child, one sphere shell per depth).
  *           Stretched to the free area's aspect. neural, orbit, atom, constellation.
  *   drift   radial with looser spacing (themes add their own drift to `live`). flow.
  *

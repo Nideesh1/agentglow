@@ -497,7 +497,7 @@ export class FlowEngine {
       s.z = parent.z;
     } else {
       s.x = a.pos.x;
-      s.y = 0.9;
+      s.y = a.pos.y + 0.9;
       s.z = a.pos.z;
     }
     this.idToSlot.set(inst.id, si);
@@ -651,7 +651,8 @@ export class FlowEngine {
       const ka = s.ka!;
       const tx = ka.pos.x;
       const tz = ka.pos.z;
-      const ty = 0.9 + Math.sin(t * 0.9 + si) * 0.18;
+      // (pos.y: the kit lays subagent trees out in 3D, up / down off the ground plane)
+      const ty = ka.pos.y + 0.9 + Math.sin(t * 0.9 + si) * 0.18;
       if (!inst.exitAt) {
         s.x += (tx - s.x) * k;
         s.y += (ty - s.y) * k;

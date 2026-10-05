@@ -2,7 +2,8 @@
  * Kit layout engine: kitTick() runs once per frame (after world tick() + lodTick()) and owns WHERE everything is:
  *   1. membership: which agents/runs are drawn (lod isExpanded / isRunExpanded), MCP servers/backends
  *   2. run-local agent coords (u along the run's side line, v along its axis): top-level agents on role slots
- *      (planner | researcher | writer), subagents in a radial tree round their top-level agent (wedges, one ring per depth), seeded jitter, stable slots
+ *      (planner | researcher | writer), subagents in a 3D spherical radial tree round their top-level agent (a cone per
+ *      child, one sphere shell per depth, w out of the layout plane), seeded jitter, stable slots
  *   3. run anchors from the theme's preset (presets.ts), each run centred on its anchor
  *   4. cluster balls (grouped mode), core extents, periphery: MCP servers + backends and the side graph
  *   5. easing (~0.6s) of every position; agent `live` = eased home (themes add their own motion on top)
@@ -14,7 +15,7 @@ import { alt, jit } from "../spread";
 import { IDLE_DIM, graphMix, graphShown, isDone, isIdle, mcpWanted, roleScale, svcIdle, world, type AgentType, type Instance } from "../world";
 import { fit, fitTick } from "./fit";
 import { radial, type LayoutPreset, type Point2, type PresetCtx, type Slot2 } from "./presets";
-import { kit, nextUid, planePoint, reduced, type KitAgent, type KitBackend, type KitMcp, type KitRun } from "./state";
+import { kit, nextUid, planeNormal, planePoint, reduced, type KitAgent, type KitBackend, type KitMcp, type KitRun } from "./state";
 
 export type KitConfig = {
   preset: LayoutPreset;
@@ -67,6 +68,7 @@ function mkRun(id: string): KitRun {
     target: new THREE.Vector3(),
     axis: new THREE.Vector3(0, -1, 0),
     side: new THREE.Vector3(1, 0, 0),
+    normal: planeNormal(new THREE.Vector3()),
     angle: -Math.PI / 2,
     targetAngle: -Math.PI / 2,
     cu: 0,
@@ -123,8 +125,10 @@ function mkAgent(inst: Instance): KitAgent {
     run,
     u: 0,
     v: 0,
+    w: 0,
     eu: 0,
     ev: 0,
+    ew: 0,
     target: new THREE.Vector3(),
     pos: new THREE.Vector3(),
     live: new THREE.Vector3(),
@@ -142,7 +146,9 @@ function mkAgent(inst: Instance): KitAgent {
     rings: 0,
     cell: 0,
     tr: null,
-    wc: 0,
+    du: 1,
+    dv: 0,
+    dw: 0,
     ww: 0,
     rho: 0,
     rhoD: new Float64Array(TREE_D + 1),
@@ -248,61 +254,88 @@ function orderRuns() {
 // ------------------------------------------------------------------ run-local agent layout
 
 /**
- * Subagents form a RADIAL TREE round their top-level agent (the root): its children sit on a FULL ring (360 deg,
- * evenly spaced by arc length, 360/n apart). Each child owns an angular WEDGE (its share of the root's circle) and
- * every descendant stays inside it: a node splits its wedge between its child slots by leaf count, and each depth sits on
- * its own concentric ring round the root (radius by depth, grown until the narrowest wedge at that depth has a
- * neighbour gap of room). Straight parent -> child links therefore never cross or overlap; two children of a node
- * fan out as a small "V" inside its wedge. A root's ring is an ellipse in the free area's aspect when its run is
- * the only one on screen (the main group fills the screen; the whole tree is stretched the same way, which keeps
- * links apart); other rings are circles. More than RING_CAP children of a root use concentric rings (alternate
- * rings staggered half a step). Footprints are measured bottom-up first; a root's footprint covers its outermost
- * tree ring (last frame), so top-level agents of one run sit their trees apart.
- * A root's ring starts so no member sits straight below the root (its name label) and a single subagent goes
- * down-right.
- * Siblings keep their slot (sib) and the count only grows while the parent is visible (kidsMax): stable, eased.
+ * Subagents form a 3D SPHERICAL RADIAL TREE round their top-level agent (the root), filling space 360 deg in every
+ * direction (w runs out of the layout plane, along run.normal), not a flat disc:
+ *   - the root's children sit on a SPHERE SHELL round it, spread evenly over the full sphere by a Fibonacci
+ *     (golden-angle) lattice whose pole points out of the plane, turned round that pole so no child sits on the
+ *     root's own lines (its name label below, the run line its neighbours sit on);
+ *   - each child owns a CONE (solid angle) round its direction from the root, sized by its subtree's leaf count;
+ *     its children are spread evenly inside that cone (a golden-angle lattice on the cone's spherical cap) and own
+ *     sub-cones (their share of it by leaf count), so a whole subtree stays inside its cone;
+ *   - each depth sits on its own sphere shell round the root (radius by depth, grown until the narrowest cone at
+ *     that depth still holds a neighbour gap), so straight parent -> child links never cross or overlap.
+ * A root's shell is an ellipsoid in the free area's aspect when its run is the only one on screen (the main group
+ * fills the screen); otherwise a sphere. A root's footprint covers its outermost shell (last frame), so top-level
+ * agents of one run sit their trees apart. A lone subagent of a top-level agent goes down-right (tilted towards the
+ * viewer). Lattices are deterministic: siblings keep their slot (sib) and the slot count only grows while the parent
+ * is visible (kidsMax), so a new child only nudges its siblings and every position eases.
  */
-const RING_CAP = 16;
-/** neighbour gap on a top-level ring / a nested ring, in subGap units (an agent + its halo + name, with air) */
+/** neighbour gap on a top-level shell / a nested one, in subGap units (an agent + its halo + name, with air) */
 const CELL_TOP = 2.6;
 const CELL_SUB = 1.45;
-/** gap between concentric rings, in neighbour gaps */
-const RING_DR = 0.9;
 /** footprint radius of a childless agent (local units, before fit.spread) */
 const FOOT = 1.3;
 const TAU = Math.PI * 2;
-/** deepest tree ring tracked per root (deeper agents share it) */
+/** deepest tree shell tracked per root (deeper agents share it) */
 const TREE_D = 7;
-/** radial step between tree rings, in fanLen units (local, before fit.spread) */
+/** radial step between tree shells, in fanLen units (local, before fit.spread) */
 const TREE_STEP = 0.85;
-/** widest wedge a root child gets (a lone child / two children: its subtree still fans outward, never round the root) */
-const WEDGE_MAX = Math.PI;
-/** arc-length table of the last ellipse asked for (equal spacing along the curve, not in angle) */
-const ARC_N = 96;
-const arc = { rx: 0, ry: 0, t: new Float64Array(ARC_N + 1) };
-/** parametric angle (ccw on screen from screen-right) at fraction f (0..1) of the ellipse's perimeter from the top */
-function ellipseAngle(f: number, rx: number, ry: number) {
-  if (rx !== arc.rx || ry !== arc.ry) {
-    arc.rx = rx;
-    arc.ry = ry;
-    let acc = 0;
-    arc.t[0] = 0;
-    for (let i = 1; i <= ARC_N; i++) {
-      const t = Math.PI / 2 + ((i - 0.5) / ARC_N) * TAU;
-      acc += Math.hypot(rx * Math.sin(t), ry * Math.cos(t));
-      arc.t[i] = acc;
-    }
-    for (let i = 1; i <= ARC_N; i++) arc.t[i] /= acc;
-  }
-  f -= Math.floor(f);
-  let i = 1;
-  while (i < ARC_N && arc.t[i] < f) i++;
-  const f0 = arc.t[i - 1], f1 = arc.t[i];
-  const k = f1 > f0 ? (f - f0) / (f1 - f0) : 0;
-  return Math.PI / 2 + ((i - 1 + k) / ARC_N) * TAU;
+/** widest cone a root child gets (half-angle; a lone child / two children: its subtree still fans outward) */
+const CONE_MAX = Math.PI / 2;
+/** cones are a bit narrower than their solid-angle share: air between neighbouring subtrees */
+const CONE_K = 0.85;
+/** golden angle: consecutive lattice points turn by it, so any count spreads evenly (Fibonacci lattice) */
+const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+/** scratch direction (run-local u, v, w; unit) */
+const dir = { u: 0, v: 0, w: 0 };
+
+/** Slot i of n on a root's full sphere (Fibonacci lattice, pole = w), turned by `off` round the pole -> dir. */
+function sphereSlot(i: number, n: number, off: number) {
+  const z = 1 - (2 * (i + 0.5)) / n;
+  const rr = Math.sqrt(Math.max(0, 1 - z * z));
+  const phi = i * GOLDEN + off;
+  dir.u = rr * Math.cos(phi);
+  dir.v = rr * Math.sin(phi);
+  dir.w = z;
 }
 
-/** bottom-up: each agent's ring (rx/ry of its first ring, ring count) and footprint radius (unscaled local units) */
+/** Slot i of n inside parent p's cone (axis p.du/dv/dw, half-angle `half`): a golden-angle lattice on the cone's
+ *  spherical cap (1 child: the axis; 2-3: a small ring), azimuth seeded per parent -> dir. */
+function capSlot(p: KitAgent, i: number, n: number, half: number) {
+  if (n <= 1) {
+    dir.u = p.du;
+    dir.v = p.dv;
+    dir.w = p.dw;
+    return;
+  }
+  const span = 1 - Math.cos(half);
+  const phi0 = (jit(p.id, 41) + 0.5) * TAU;
+  const ct = n <= 3 ? 1 - span * 0.3 : 1 - (span * (i + 0.5)) / n;
+  const phi = n <= 3 ? phi0 + (i * TAU) / n : phi0 + i * GOLDEN;
+  const st = Math.sqrt(Math.max(0, 1 - ct * ct));
+  // basis round the axis: e1 = axis x w (or axis x u near the pole), e2 = axis x e1
+  let e1u = p.dv, e1v = -p.du, e1w = 0;
+  let l = Math.hypot(e1u, e1v);
+  if (l < 0.3) (e1u = 0), (e1v = p.dw), (e1w = -p.dv), (l = Math.hypot(e1v, e1w));
+  e1u /= l;
+  e1v /= l;
+  e1w /= l;
+  const e2u = p.dv * e1w - p.dw * e1v;
+  const e2v = p.dw * e1u - p.du * e1w;
+  const e2w = p.du * e1v - p.dv * e1u;
+  const c = Math.cos(phi) * st, s = Math.sin(phi) * st;
+  dir.u = p.du * ct + e1u * c + e2u * s;
+  dir.v = p.dv * ct + e1v * c + e2v * s;
+  dir.w = p.dw * ct + e1w * c + e2w * s;
+  const m = Math.hypot(dir.u, dir.v, dir.w) || 1;
+  dir.u /= m;
+  dir.v /= m;
+  dir.w /= m;
+}
+
+/** half-angle of a cone holding `share` (0..1) of a parent cone of half-angle `half` (equal solid angle split) */
+const coneShare = (half: number, share: number) => Math.acos(THREE.MathUtils.clamp(1 - (1 - Math.cos(half)) * share, -1, 1));
+
 /** the periphery columns beside the core are in use (MCP servers / the side graph shown) */
 function sidesUsed() {
   if (config.preset.periphery !== "sides") return false;
@@ -314,6 +347,8 @@ function sidesUsed() {
 /** a service's ring shrinks back this long after its tasks / jobs left the outer slots (agent runs never shrink) */
 const SVC_SHRINK_MS = 6000;
 
+/** bottom-up: each agent's first shell (rx/ry in the plane, sqrt(rx * ry) out of it) and footprint radius
+ *  (unscaled local units) */
 function measureRings() {
   const L = config.preset.local;
   const now = performance.now();
@@ -343,12 +378,12 @@ function measureRings() {
         a.foot = FOOT;
       } else {
         const top = a.depth === 0;
-        const m = Math.ceil(n / RING_CAP);
-        const per = Math.ceil(n / m);
         const kid = Math.max(FOOT, a.kidFoot);
-        // a root's ring: a neighbour gap per member (their subtrees grow outward in their wedges, see treeWedges)
+        // a root's shell: a neighbour gap per member over the sphere (their subtrees grow outward in their cones, see
+        // treeCones); members in front of / behind each other overlap on screen, so a bit more than the bare
+        // lattice spacing (sqrt(4 pi / n) rad)
         const cell = Math.max(L.subGap * (top ? CELL_TOP : CELL_SUB), n < RING_BIG ? kid * 2 + 0.6 : 0);
-        const r = Math.max(top ? L.fanLen * 1.3 : L.fanLen * 0.85, n > 1 ? (per * cell) / TAU : 0);
+        const r = Math.max(top ? L.fanLen * 1.3 : L.fanLen * 0.85, n > 1 ? (cell * Math.sqrt(n)) / 2.6 : 0);
         if (top && n > 1 && kit.runs.size === 1) {
           // the main group (one run on screen): an ellipse in the free area's shape; a tilted ground plane
           // foreshortens v on screen
@@ -358,13 +393,12 @@ function measureRings() {
           a.rx = r * Math.sqrt(asp);
           a.ry = Math.max(cell * 0.6, r / Math.sqrt(asp)) * (kit.plane === "xz" ? bStretch : 1);
         } else a.rx = a.ry = r;
-        a.rings = m;
+        a.rings = 1;
         a.cell = cell;
-        const grow = (m - 1) * cell * RING_DR;
-        a.foot = Math.max(a.rx, a.ry) + grow + kid;
+        a.foot = Math.max(a.rx, a.ry) + kid;
       }
-      // a subagent's own children live in its root's radial tree (its wedge, further out), not round it; a root's
-      // footprint covers its outermost tree ring (last frame's, eased positions follow)
+      // a subagent's own children live in its root's radial tree (its cone, further out), not round it; a root's
+      // footprint covers its outermost tree shell (last frame's, eased positions follow)
       if (a.depth > 0) a.foot = FOOT;
       else if (a.treeR > 0) a.foot = Math.max(a.foot, Math.max(a.rx, a.ry) * a.treeR + FOOT);
       const p = a.inst.parent ? kit.agents.get(a.inst.parent) : undefined;
@@ -374,14 +408,6 @@ function measureRings() {
     }
 }
 
-/** Ring angle (run-local u/v, v runs screen-down) at fraction f of the way round: a top-level ring from the top
- *  (equal arc length on its ellipse), a nested ring from the line back to the grandparent. */
-function ringAngle(p: KitAgent, f: number, rx: number, ry: number) {
-  const gp = p.depth > 0 && p.inst.parent ? kit.agents.get(p.inst.parent) : undefined;
-  if (gp) return Math.atan2(gp.v - p.v, gp.u - p.u) + f * TAU;
-  const t = ellipseAngle(f, rx, ry); // ccw from screen-right; to u/v: (cos t, -sin t) -> angle -t
-  return -t;
-}
 /** run-local u/v angle of "screen down" for a run (its frame rotates on a ring of runs) */
 function downAngle(r: KitRun) {
   const ca = Math.cos(r.targetAngle);
@@ -391,46 +417,57 @@ function downAngle(r: KitRun) {
   if (sx < -1e-3) (sx = -sx), (sy = -sy);
   return Math.atan2(-sa, -sy);
 }
-const angDist = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+/** directions a root's children keep away from (run-local unit u/v/w + weight) */
 const FORBID: number[] = [];
-const FORBID_W: number[] = [];
 let frameNo = 0;
 /**
- * Where a ring starts (a fraction of one step, same for every member): the offset whose members stay furthest from
- * the parent's own lines: its name label (screen down), the edge back to its parent, and the run line its
- * neighbours sit on (top-level agents of a multi-agent run). Searched once per parent per frame; ties keep 0.
+ * How far a root's sphere lattice turns round its pole (radians, same for every member): the turn whose members
+ * stay furthest from the root's own lines: its name label (screen down), the run line its neighbours sit on
+ * (top-level agents of a multi-agent run) and its halo label (above, high volume). Searched once per root per frame;
+ * ties keep the smaller turn (deterministic).
  */
-function ringOffset(p: KitAgent, cnt: number) {
+function sphereOffset(p: KitAgent, cnt: number) {
   if (p.ringAt === frameNo) return p.ringOff;
   p.ringAt = frameNo;
-  FORBID.length = FORBID_W.length = 0;
-  FORBID.push(downAngle(p.run));
-  FORBID_W.push(1);
-  const gp = p.depth > 0 && p.inst.parent ? kit.agents.get(p.inst.parent) : undefined;
-  if (gp) FORBID.push(Math.atan2(gp.v - p.v, gp.u - p.u)), FORBID_W.push(1);
-  else if (p.run.tops > 1 || p.run.run?.hasSteps) FORBID.push(0, Math.PI), FORBID_W.push(0.8, 0.8);
-  if (p.inst.hv) FORBID.push(FORBID[0] + Math.PI), FORBID_W.push(1); // its halo label above the ring
-  const rx = Math.max(1e-3, p.rx);
-  const ry = Math.max(1e-3, p.ry);
+  FORBID.length = 0;
+  const d = downAngle(p.run);
+  FORBID.push(Math.cos(d), Math.sin(d), 0, 1);
+  if (p.run.tops > 1 || p.run.run?.hasSteps) FORBID.push(1, 0, 0, 0.8, -1, 0, 0, 0.8);
+  if (p.inst.hv) FORBID.push(-Math.cos(d), -Math.sin(d), 0, 1); // its halo label above the shell
   let best = 0;
   let bestS = -1;
-  for (let c = 0; c < 12; c++) {
-    const o = c / 12;
-    let sc = Infinity;
-    for (let k = 0; k < cnt && sc > bestS; k++) {
-      const t = ringAngle(p, (k + o) / cnt, rx, ry);
-      for (let q = 0; q < FORBID.length; q++) sc = Math.min(sc, angDist(t, FORBID[q]) / FORBID_W[q]);
+  if (cnt <= 64)
+    for (let c = 0; c < 24; c++) {
+      const o = (c / 24) * TAU;
+      let sc = Infinity;
+      for (let k = 0; k < cnt && sc > bestS; k++) {
+        sphereSlot(k, cnt, o);
+        for (let q = 0; q < FORBID.length; q += 4) {
+          const dot = THREE.MathUtils.clamp(dir.u * FORBID[q] + dir.v * FORBID[q + 1] + dir.w * FORBID[q + 2], -1, 1);
+          sc = Math.min(sc, Math.acos(dot) / FORBID[q + 3]);
+        }
+      }
+      if (sc > bestS + 1e-3) (bestS = sc), (best = o);
     }
-    if (sc > bestS + 1e-3) (bestS = sc), (best = o);
-  }
   p.ringOff = best;
   return best;
+}
+
+/** out-of-plane radius of a root's first shell (its in-plane ellipse is rx by ry) */
+const rzOf = (tr: KitAgent) => Math.sqrt(Math.max(0, tr.rx * tr.ry));
+
+function placeTree(a: KitAgent, tr: KitAgent) {
+  const sp = fit.spread;
+  a.u = tr.u + a.du * a.rho * tr.rx * sp;
+  a.v = tr.v + a.dv * a.rho * tr.ry * sp;
+  a.w = tr.w + a.dw * a.rho * rzOf(tr) * sp;
 }
 
 function placeLocal(a: KitAgent) {
   const L = config.preset.local;
   const sp = fit.spread;
   const inst = a.inst;
+  a.w = 0;
   if (a.depth === 0 && a.svcIdx >= 0 && a.run.svc > 1) {
     // backend services (2+): apart on a ring (2 = left | right), each with its own ring of tasks / jobs, so their
     // halo labels never stack and message comets visibly travel between them
@@ -469,43 +506,35 @@ function placeLocal(a: KitAgent) {
   const p = inst.parent ? kit.agents.get(inst.parent) : undefined;
   if (!p) return; // parent not drawn (collapsed / gone): keep the last spot
   const n = (a.sibs = Math.max(1, p.kidsMax));
-  const tr = p.tr;
-  if (p.depth > 0 && tr) {
-    // radial tree, depth >= 2: inside its parent's wedge (treeWedges), on its depth's ring round the root
-    const du = Math.cos(a.wc) * a.rho * tr.rx;
-    const dv = Math.sin(a.wc) * a.rho * tr.ry;
-    a.u = tr.u + du * sp;
-    a.v = tr.v + dv * sp;
+  if (p.depth > 0) {
+    // spherical tree, depth >= 2: inside its parent's cone (treeCones), on its depth's shell round the root
+    if (p.tr) placeTree(a, p.tr);
+    else (a.u = p.u), (a.v = p.v), (a.w = p.w), (a.tr = null); // parent not in a tree yet (picked up next frame)
     return;
   }
-  const m = Math.max(1, p.rings);
-  const j = a.sib % m; // ring (siblings go round-robin over the rings: every ring fills evenly)
-  const idx = Math.floor(a.sib / m);
-  const cnt = Math.floor(n / m) + (j < n % m ? 1 : 0);
-  const k = 1 + (j * p.cell * RING_DR) / Math.max(1e-3, Math.max(p.rx, p.ry));
-  const rx = p.rx * k;
-  const ry = p.ry * k;
-  let t: number;
-  if (!p.inst.parent && cnt === 1 && m === 1) t = Math.PI / 4; // a lone subagent of a top-level agent: down-right (clear of its name below and the run line / label)
-  else t = ringAngle(p, (idx + ringOffset(p, cnt) + (j % 2) * 0.5) / cnt, rx, ry);
-  a.u = p.u + Math.cos(t) * rx * sp;
-  a.v = p.v + Math.sin(t) * ry * sp;
-  if (p.depth === 0) {
-    // a root's child: the root of a wedge (its share of the circle) that its whole subtree stays in
-    a.tr = p;
-    a.wc = t;
-    a.ww = Math.min(WEDGE_MAX, TAU / n);
-    a.rho = k;
-    p.rhoD[1] = Math.max(p.rhoD[1], k);
-  } else a.tr = null; // parent not in a tree yet (picked up next frame)
+  // a root's child: on the root's first shell, the axis of a cone (its share of the sphere) its whole subtree stays in
+  if (n === 1 && !p.inst.parent) {
+    // a lone subagent of a top-level agent: down-right, tilted towards the viewer (clear of its name below and the
+    // run line / label)
+    (dir.u = 0.62), (dir.v = 0.62), (dir.w = 0.48);
+  } else sphereSlot(a.sib, n, sphereOffset(p, n));
+  a.tr = p;
+  a.du = dir.u;
+  a.dv = dir.v;
+  a.dw = dir.w;
+  a.ww = 2 * Math.min(CONE_MAX, CONE_K * coneShare(Math.PI, a.tw / Math.max(1, p.tw, n)));
+  a.rho = 1;
+  p.rhoD[1] = Math.max(p.rhoD[1], 1);
+  placeTree(a, p);
 }
 
 /**
- * Radial tree, depth d >= 2 (parents placed): each node's wedge = its share of its parent's wedge by leaf count, then
- * the depth's ring radius per root: one step (TREE_STEP) outside the previous ring, and wide enough that the
- * narrowest wedge on it still holds a neighbour gap (arc length = radius * wedge).
+ * Spherical tree, depth d >= 2 (parents placed): each node's cone = its share of its parent's cone by leaf count
+ * (solid angle), its axis a golden-angle lattice slot inside the parent's cone, then the depth's shell radius per
+ * root: one step (TREE_STEP) outside the previous shell, and wide enough that the narrowest cone on it still holds a
+ * neighbour gap (arc length = radius * opening angle).
  */
-function treeWedges(d: number) {
+function treeCones(d: number) {
   const L = config.preset.local;
   for (const a of kit.agents.values()) {
     if (Math.min(a.depth, TREE_D) !== d) continue;
@@ -513,12 +542,12 @@ function treeWedges(d: number) {
     const tr = p && p.depth > 0 ? p.tr : null;
     a.tr = tr;
     if (!p || !tr) continue;
-    // its slot's share of the parent's wedge, by subtree weight (leaves; an empty slot counts 1), in slot order
-    let before = a.sib;
-    for (const o of kit.agents.values()) if (o.sib < a.sib && o.depth > 0 && o.inst.parent === p.id) before += o.tw - 1;
-    const total = Math.max(1, p.tw);
-    a.ww = (p.ww * a.tw) / total;
-    a.wc = p.wc - p.ww / 2 + (p.ww * before) / total + a.ww / 2;
+    const half = p.ww / 2;
+    capSlot(p, a.sib, Math.max(1, p.kidsMax), half);
+    a.du = dir.u;
+    a.dv = dir.v;
+    a.dw = dir.w;
+    a.ww = 2 * CONE_K * coneShare(half, a.tw / Math.max(1, p.tw));
     const r = Math.max(1e-3, Math.sqrt(tr.rx * tr.ry));
     tr.rhoD[d] = Math.max(tr.rhoD[d], tr.rhoD[d - 1] + (TREE_STEP * L.fanLen) / r, (L.subGap * CELL_SUB) / (r * Math.max(1e-3, a.ww)));
   }
@@ -560,11 +589,11 @@ function svcInner(a: KitAgent) {
 
 function layoutAgents() {
   measureRings();
-  // radial trees: fresh ring radii every frame (treeR feeds next frame's footprints)
+  // radial trees: fresh shell radii every frame (treeR feeds next frame's footprints)
   for (const a of kit.agents.values()) if (a.depth === 0) a.rhoD.fill(0), (a.treeR = 0);
-  // depth order: parents before children (depth is small); tree wedges + ring radii per depth before placing it
+  // depth order: parents before children (depth is small); tree cones + shell radii per depth before placing it
   for (let d = 0; d <= TREE_D; d++) {
-    if (d >= 2) treeWedges(d);
+    if (d >= 2) treeCones(d);
     for (const a of kit.agents.values()) if (Math.min(a.depth, TREE_D) === d) placeLocal(a);
     if (d === 1) for (const a of kit.agents.values()) if (a.depth === 0) a.treeR = a.rhoD[1];
   }
@@ -625,9 +654,9 @@ function setFrame(angle: number, axis: THREE.Vector3, side: THREE.Vector3) {
 }
 
 /** stage target of run-local coords using the run's TARGET frame (for camera framing / extents) */
-function targetLocal(r: KitRun, u: number, v: number, out: THREE.Vector3) {
+function targetLocal(r: KitRun, u: number, v: number, w: number, out: THREE.Vector3) {
   setFrame(r.targetAngle, _v, _w);
-  return out.copy(r.target).addScaledVector(_w, u - r.tcu).addScaledVector(_v, v - r.tcv);
+  return out.copy(r.target).addScaledVector(_w, u - r.tcu).addScaledVector(_v, v - r.tcv).addScaledVector(planeNormal(_x), w);
 }
 
 const a2 = (p: THREE.Vector3) => p.x;
@@ -835,7 +864,7 @@ export function kitTick(now = performance.now()) {
   layoutAgents();
   layoutRuns();
   // agent targets (target frame) for extents + framing
-  for (const a of kit.agents.values()) targetLocal(a.run, a.u, a.v, a.target);
+  for (const a of kit.agents.values()) targetLocal(a.run, a.u, a.v, a.w, a.target);
   layoutPeriphery();
 
   // ---- ease
@@ -854,18 +883,21 @@ export function kitTick(now = performance.now()) {
       r.cv += (r.tcv - r.cv) * k;
     }
     setFrame(r.angle, r.axis, r.side);
+    planeNormal(r.normal);
   }
   for (const a of kit.agents.values()) {
     if (a.fresh) {
       a.eu = a.u;
       a.ev = a.v;
+      a.ew = a.w;
       a.fresh = false;
     } else {
       a.eu += (a.u - a.eu) * k;
       a.ev += (a.v - a.ev) * k;
+      a.ew += (a.w - a.ew) * k;
     }
     const r = a.run;
-    a.pos.copy(r.origin).addScaledVector(r.side, a.eu - r.cu).addScaledVector(r.axis, a.ev - r.cv);
+    a.pos.copy(r.origin).addScaledVector(r.side, a.eu - r.cu).addScaledVector(r.axis, a.ev - r.cv).addScaledVector(r.normal, a.ew);
     a.live.copy(a.pos);
     // finished agents dim fully, an idle run's agents part way (server `run idle`), and so does a backend service
     // with no traffic for a while (world.svcIdle); it brightens again on its next request / message
@@ -923,10 +955,11 @@ export function kitExtents(visit: (p: THREE.Vector3, r: number) => void, agentRa
     if (!a.inst.exitAt) fit.nodeR = Math.max(fit.nodeR, agentRadius * a.scale);
     // room for its decision label below and its halo label above (px-sized: world size at the fitted distance)
     const r = agentRadius * a.scale * 1.3;
+    // (at the agent's own depth out of the plane: subagent trees are 3D)
     planePoint(a2(a.target), b2(a.target) - r - (LABEL_BELOW_PX * fit.wpp) / fit.foreshorten, _x);
-    visit(kit.plane === "xz" ? _x.setY(a.target.y) : _x, 0);
+    visit(kit.plane === "xz" ? _x.setY(a.target.y) : _x.setZ(a.target.z), 0);
     planePoint(a2(a.target), b2(a.target) + r + (LABEL_ABOVE_PX * fit.wpp) / fit.foreshorten, _x);
-    visit(kit.plane === "xz" ? _x.setY(a.target.y) : _x, 0);
+    visit(kit.plane === "xz" ? _x.setY(a.target.y) : _x.setZ(a.target.z), 0);
     // tall agents on a ground plane (towers, trees, machines): their top must stay in view too
     if (up) visit(_x.copy(a.target).setY(a.target.y + agentHeight * a.scale), agentRadius * a.scale * 0.6);
   }
