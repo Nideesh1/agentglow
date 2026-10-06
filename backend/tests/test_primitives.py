@@ -498,3 +498,16 @@ def test_flat_call_status_and_inference_error(cap):
                 raise RuntimeError("boom")
     evs, _ = feed(cap)
     assert of(evs, "mcp", resource="scorer", phase="result")[0]["error"] is True
+
+
+def test_job_under_nests_under_agent_and_falls_back_when_unknown(cap):
+    m = Mapper()
+    with request(cap):
+        with agentglow.agent("researcher") as a:
+            agentglow.job("o-9", kind="fulfil", state="queued", under=a)
+            sid = format(a.span.get_span_context().span_id, "016x")
+        agentglow.job("o-10", kind="fulfil", state="queued", under="nope")
+    evs, _ = feed(cap, m)
+    sp = of(evs, "spawn", id="job:o-9")[0]
+    assert sp["parent_id"] == sid and sp["job"] is True and sp["since"] == sp["ts"]  # since: live elapsed label, not NaN
+    assert of(evs, "spawn", id="job:o-10")[0]["parent_id"] == "svc:api"

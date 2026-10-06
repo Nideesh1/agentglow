@@ -414,17 +414,39 @@ class Job(_CtxSpan):
         super().end(exc)
 
 
+def _as_node_id(v: Any) -> str | None:
+    """An already-spawned `Agent`/span's node id (for `job(..., under=...)`), or a plain id string passed through."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return v
+    span = getattr(v, "span", None)
+    ctx = span.get_span_context() if span is not None else None
+    if ctx is not None and ctx.is_valid:
+        from .otel import _hex
+        return _hex(ctx.span_id, 16)
+    return None
+
+
 def job(id: Any, kind: str = "job", state: str | None = None, attempt: int = 1, max_attempts: int | None = None,
-        parent: Any = None) -> Job:
+        parent: Any = None, under: Any = None) -> Job:
     """`agentglow.job(order_id, kind="fulfil", state="queued")` records a state now (any process);
     `with agentglow.job(order_id, kind="fulfil", attempt=2, max_attempts=3):` wraps one attempt (running; then done,
     or on an exception retrying / dead / failed). Decorator: `@agentglow.job(id=lambda order_id, **_: order_id,
     kind="fulfil")`: each call is one attempt (`id` / `attempt` may be callables over the call's arguments; return
-    -> done, exception -> retrying / dead with `max_attempts`, else failed)."""
+    -> done, exception -> retrying / dead with `max_attempts`, else failed).
+
+    `under`: an already-spawned `Agent`/span (or its node id) to nest this job's node under in the scene, instead of
+    the default cross-process `services`/`jobs` bucket. `parent=` only affects OTel trace lineage (e.g. continuing a
+    trace into a detached thread) - it does NOT change where the job renders; `under` is what controls that."""
     lazy = callable(id) or callable(attempt)
     j = Job("job" if callable(id) else id, kind, 1 if callable(attempt) else attempt, max_attempts, parent)
     if state is not None and not lazy:
-        _signal("job", {"id": j.id, "kind": kind, "state": state, "attempt": j.attempt})
+        fields = {"id": j.id, "kind": kind, "state": state, "attempt": j.attempt}
+        under_id = _as_node_id(under)
+        if under_id:
+            fields["under"] = under_id
+        _signal("job", fields)
 
     def make(c: Any) -> Job:
         jid = c.value(id, "id")
@@ -1080,17 +1102,25 @@ class Prims:
                   group=grp, error=True if s.status == "error" else None)
 
     # ------------------------------------------------------------------ jobs
-    def _job(self, job_id: str, kind: Any, scope: Any, svc: str | None, ts: int, out: list) -> _Job | None:
+    def _job(self, job_id: str, kind: Any, scope: Any, svc: str | None, ts: int, out: list,
+              under: str | None = None) -> _Job | None:
         jid = _label(job_id, 40)
         if not jid:
             return None
         key = (scope, job_id)
         j = self.jobs.get(key)
         if j is None or j.exited:
-            run = self.m.svc.run_id(scope)
-            if run not in self.m.runs and svc is None:
-                self.m.svc.ensure("jobs", scope, ts, out)  # no service at all: the jobs hang off a `jobs` node
-                svc = f"svc:{scope}:jobs" if scope else "svc:jobs"
+            under_agent = self.m.agents.get(under) if under else None
+            if under_agent is not None:
+                # explicit placement (job(..., under=some_agent)): nest in the caller's own run, skip the
+                # cross-process `services`/`jobs` bucket entirely - the caller already knows exactly where this
+                # job belongs, so the usual svc-inheritance fallback below would be actively wrong here.
+                run, svc = under_agent.run, under
+            else:
+                run = self.m.svc.run_id(scope)
+                if run not in self.m.runs and svc is None:
+                    self.m.svc.ensure("jobs", scope, ts, out)  # no service at all: the jobs hang off a `jobs` node
+                    svc = f"svc:{scope}:jobs" if scope else "svc:jobs"
             j = _Job(f"job:{scope}:{jid}" if scope else f"job:{jid}", jid, run, _label(kind or "job", 24) or "job", last=ts)
             self.jobs[key] = j
             while len(self.jobs) > 20_000:
@@ -1100,7 +1130,11 @@ class Prims:
 
                 parent = svc if svc in self.m.agents else None
                 name = f"{j.kind} {jid[:10]}"
-                ev = {"type": "spawn", "run_id": run, "id": j.id, "agent": name, "parent_id": parent, "subagent": parent is not None, "ts": ts}
+                # `job: True` tells the frontend's spawn handler to initialize this instance's elapsed-time
+                # tracker (`since`) - without it, `i.job` is never created and the node's live label computes
+                # `(end || Date.now()) - undefined` = NaN forever.
+                ev = {"type": "spawn", "run_id": run, "id": j.id, "agent": name, "parent_id": parent, "subagent": parent is not None,
+                      "job": True, "since": ts, "ts": ts}
                 self.m.agents[j.id] = Agent(name, run)
                 j.spawned, j.spawn_ev, j.at = True, ev, svc
                 out.append(ev)
@@ -1193,7 +1227,8 @@ class Prims:
                 ev["status"] = int(st)
             out.append(ev)
         elif name == "job":
-            j = self._job(str(f.get("id") or f.get("job_id") or ""), f.get("kind"), scope, svc, ts, out)
+            j = self._job(str(f.get("id") or f.get("job_id") or ""), f.get("kind"), scope, svc, ts, out,
+                          under=f.get("under"))
             if j is not None:
                 self._job_state(j, f.get("state") or "queued", f.get("attempt"), svc, ts, out)
         elif name == "link":
