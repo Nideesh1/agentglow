@@ -267,8 +267,10 @@ function KindSection({ sel, a, kind }: { sel: ResSel; a: Agg; kind: string }) {
       </>
     );
   } else if (kind === "model" || kind === "llm") {
-    const units = st?.units ?? a.units;
-    if (units) rows.push(["units scored", `${kfmt(units)} ${st?.unit ?? a.unit ?? ""}`.trim()]);
+    // session total (counted from results) first: resource_stats units cover one window only
+    const units = a.units || st?.units;
+    const unit = a.unit ?? st?.unit ?? "";
+    if (units && unit !== "calls") rows.push([kind === "llm" ? "units" : "units scored", `${kfmt(units)} ${unit}`.trim()]);
     if (st?.rtf !== undefined) rows.push(["RTF", `${st.rtf}`]);
     if (a.device) rows.push(["device", a.device]);
     rows.push(["last latency", ms(a.lastMs)]);

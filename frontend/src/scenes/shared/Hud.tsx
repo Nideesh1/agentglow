@@ -10,6 +10,7 @@ import { decisionTint } from "./kit/DecisionGlyph";
 import { haloHover } from "./kit/HighVolume";
 import { fmtMs, gaugeText, jobStateText, metricText } from "./prims";
 import { PrimDetail } from "./PrimPanel";
+import { ThemePicker } from "./ThemePicker";
 import { ResourceDetail, ServiceDetail } from "./ResourcePanel";
 import { clearSearch, cycleSearch, enterSearch, focusHit, setSearch, useSearch, search, type HitKind } from "./search";
 import { STALE_TEXT, useClearedAt, viewClearedAt, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, DB_PREFIX, serverLabel, type Instance, type Run, type WorldEvent } from "./world";
@@ -190,7 +191,7 @@ function saveSide(v: { collapsed: boolean; tab: Tab }) {
 const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 
 function HudPanels({ title, subtitle, onClose, inset, children }: { title: string; subtitle: string; selected?: string | null; onClose?: () => void; inset?: ReactNode; children?: ReactNode }) {
-  const { embedded, scope, run: runFilter, clearable = true } = useSceneConfig();
+  const { embedded, scope, run: runFilter, clearable = true, theme, themePicker = true, onThemeChange } = useSceneConfig();
   const clearedAt = useClearedAt();
   const canRun = useRunAvailable();
   const canApprove = useApproveAvailable();
@@ -330,10 +331,14 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
       <div ref={topRef} className={`hud-topwrap${side.collapsed ? " is-rail" : ""}`}>
         <header className="hud hud-top">
           <div className="hud-bar">
-            <div className="hud-title">
-              <span className="hud-dot" />
-              {title}
-            </div>
+            {themePicker && onThemeChange ? (
+              <ThemePicker title={title} current={theme} onPick={onThemeChange} galleryHref={embedded ? undefined : `${base}${qs}`} />
+            ) : (
+              <div className="hud-title">
+                <span className="hud-dot" />
+                {title}
+              </div>
+            )}
             {w.mode === "sim" && <span className="hud-badge">sim</span>}
             {w.mode === "live" && !w.unauthorized && <span className="hud-badge hud-badge--live">live</span>}
             {scope && <FilterChip label="scope" value={scope} />}
@@ -356,7 +361,7 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
             </button>
             {clearable && !w.unauthorized && <ClearButton clearedAt={clearedAt} />}
             {w.mode === "live" && canRun && <RunButton />}
-            {!embedded && (
+            {!embedded && !(themePicker && onThemeChange) && (
               <select className="hud-theme" value={here} aria-label="Theme" onChange={(e) => (location.href = `${base}${e.target.value}${import.meta.env.VITE_DEMO === "1" && e.target.value ? "/" : ""}${qs}`)}>
                 <option value="">all themes</option>
                 {SCENES.map((s) => (

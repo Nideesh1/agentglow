@@ -4,6 +4,7 @@
  * scope and token never come from the URL (tokens in URLs leak); only the embed props set them.
  */
 import { createContext, useContext } from "react";
+import type { Theme } from "../../themes";
 
 export type SceneConfig = {
   /** Base URL of the agentglow server ("" = same origin). Endpoints: `${source}/live/stream|graph|health|run`. */
@@ -24,6 +25,12 @@ export type SceneConfig = {
   clearable?: boolean;
   /** Controlled clear: epoch ms = clear at that moment, null = show everything, undefined = leave it to the viewer. */
   clearedAt?: number | null;
+  /** The theme on screen (the HUD theme picker marks it). */
+  theme?: Theme;
+  /** Offer the HUD theme picker (the title opens a theme menu). Needs onThemeChange. */
+  themePicker?: boolean;
+  /** Called with the theme picked in the HUD. */
+  onThemeChange?: (t: Theme) => void;
 };
 
 /** Strip trailing slashes so `${source}/live/...` is always well-formed. */

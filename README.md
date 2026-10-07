@@ -231,6 +231,7 @@ import { AgentScene } from "agentglow";
 | `scope` / `run` | - | show only one user's/tenant's runs, or a single run (see [Security](#security--privacy)) |
 | `token` | - | viewer token minted by your backend; sent as `Authorization: Bearer` |
 | `clearable` | `true` | HUD **Clear view** button + Shift+C: hide everything on screen for this viewer only, then draw only new activity (`cleared · show all` undoes it; survives a refresh) |
+| `themePicker` | `hud` | click the HUD title for a theme menu (all 7, with taglines) that switches the scene in place; `onThemeChange(theme)` is called on a pick, uncontrolled use keeps the pick internally |
 | `clearedAt` | - | controlled clear: epoch ms = clear at that moment, `null` = show everything |
 
 ```tsx

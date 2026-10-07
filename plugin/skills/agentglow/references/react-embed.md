@@ -21,6 +21,8 @@ import { AgentScene } from "agentglow";      // also imports the CSS ("agentglow
 | `run` | | only this run (`X-AgentGlow-Run`) |
 | `token` | | viewer token from your backend (`agentglow.make_token`), sent as `Authorization: Bearer` |
 | `clearable` | `true` | HUD "Clear view" button + Shift+C: hides everything on screen for this viewer only, then draws only new activity (runs still going re-appear on their next event); persisted per source / scope / run in localStorage; the "cleared · show all" chip undoes it. The server is untouched |
+| `themePicker` | `hud` | the HUD title ("neural · living brain") opens a menu of every theme (name + tagline) and switches the scene in place; keyboard accessible, Esc / outside click closes |
+| `onThemeChange` | - | `(theme) => void`, called on a pick; without it (or if `theme` is not updated) AgentScene keeps the picked theme itself until the `theme` prop changes |
 | `clearedAt` | | controlled clear: epoch ms = clear at that moment, `null` = show everything, unset = the viewer's choice |
 | `style`, `className` | | for the container |
 

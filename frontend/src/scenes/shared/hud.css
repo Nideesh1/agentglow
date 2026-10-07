@@ -341,3 +341,18 @@
 .rp-note { font-size: 10px; color: #64748b; margin: 4px 0 0; }
 .ap-chip-link em { font-style: normal; color: #94a3b8; margin-left: 4px; }
 .rp-detail .ap-stats { grid-template-columns: repeat(3, 1fr); }
+/* ── HUD theme picker: the title opens a menu of every theme ── */
+.hud-tp { position: relative; }
+.hud-tp-btn { all: unset; display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; cursor: pointer; border-radius: 8px; padding: 1px 4px; margin: -1px -4px; }
+.hud-tp-btn:hover, .hud-tp-btn[aria-expanded="true"] { background: rgba(129, 140, 248, 0.14); }
+.hud-tp-btn:focus-visible { outline: 2px solid #818cf8; outline-offset: 1px; }
+.hud-tp-caret { font-size: 10px; color: #94a3b8; }
+.hud-tp-menu { position: absolute; z-index: 30; top: calc(100% + 8px); left: -8px; width: min(340px, calc(100vw - 32px)); max-height: min(70vh, 460px); overflow-y: auto; margin: 0; padding: 6px; list-style: none; background: rgba(10, 14, 26, 0.94); border: 1px solid rgba(148, 163, 255, 0.22); border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); outline: none; }
+.hud-tp-opt { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; border-radius: 8px; cursor: pointer; border-left: 2px solid transparent; }
+.hud-tp-opt b { font-size: 13px; color: #e2e8f0; }
+.hud-tp-opt span { font-size: 11px; line-height: 1.35; color: #94a3b8; white-space: normal; }
+.hud-tp-opt.is-active { background: rgba(129, 140, 248, 0.16); }
+.hud-tp-opt.is-current { border-left-color: #818cf8; }
+.hud-tp-opt.is-current b::after { content: " · current"; font-weight: 500; font-size: 11px; color: #a5b4fc; }
+.hud-tp-all { border-top: 1px solid rgba(148, 163, 184, 0.14); margin-top: 4px; }
+@media (max-width: 640px) { .scene-root .hud-tp-btn { font-size: 13px; } }
