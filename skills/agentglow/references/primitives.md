@@ -32,7 +32,7 @@ inside the request / handler / job / session they describe, in a process that ra
 | wait | `async with agentglow.wait("vendor reply", timeout_s=3600):` | the work is parked on something external (an event, a timer, a reply) | the step / agent shows `waiting on vendor reply` with a countdown; the run stays open |
 | approval | `async with agentglow.approval(timeout_s=900, title="Refund $420", details={...}, url=..., because=d):` | a human must approve before the work goes on | "Needs you" row with Approve / Reject and a details drawer (why, details, recent context, note, Open in app, Copy link) |
 
-Resource groups: pools, models and caches hang off one shared group labelled "MCP · backend". Name it with
+Resource groups: pools, models and caches hang off one shared group labelled "Backend". Name it with
 `group="payment-integrity scorer"` on `pool()` / `inference()` / `cache()`, or per process with
 `agentglow.watch(..., resource_group="...")` / `agentglow.resource_group("...")` / env `AGENTGLOW_RESOURCE_GROUP`. A group
 holding only models is drawn as a model hub labelled "ML · <name>" (classic ML), "LLM · <name>" (only LLMs) or

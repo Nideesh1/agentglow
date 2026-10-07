@@ -263,6 +263,7 @@ function Mcp({ McpServer, Backend, crystal }: { McpServer?: ComponentType<McpSer
           </LabelScope.Provider>
           <LabelScope.Provider value={SCOPE_BACKEND}>
             {Backend &&
+              m.srv.kind !== "api" && // an external API node is one host: the globe itself, no satellite
               [...m.backends.values()].map((b) => (
                 <Fade key={b.uid} item={b} lift={lift(m)} pick={crystal ? undefined : <ResourcePick sel={{ type: "backend", server: m.name, resource: b.res.name }} r={0.55} color={m.srv.color} mix={() => b.mix * m.mix} />}>
                   <SearchDim k={() => backendSearchDim(m.name, b.res.name)} scope="backend">

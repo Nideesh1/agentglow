@@ -11,7 +11,7 @@ exactly as before (a service only appears once it has backend spans).
 | PRODUCER span (`messaging.destination.name`) -> CONSUMER span of another service (OTel parent or link) | `message` comet producer service -> consumer service, text = the topic / stream |
 | an agent span (`agentglow.agent(...)`, GenAI invoke_agent, ...) inside a request | a short-lived subagent of the service (at most MAX_TASKS live per service; more run as the service itself) |
 | CLIENT span with `db.system` inside a request | `mcp` call/result on a synthetic database server `db:<system>` (`mcp_register` `kind: "database"`, drawn as a database node), resource = the collection / table / index, else the database name, else the system |
-| CLIENT span with HTTP inside a request | `mcp` call/result on the synthetic `backend` group, resource = the host (`payments:9100`) |
+| CLIENT span with HTTP / RPC inside a request | `mcp` call/result on a synthetic external API node `api:<host>` (`mcp_register` `kind: "api"`), resource = the host (`payments:9100`) |
 | CLIENT span inside an MCP tool span (`agentglow.mcp.server`) that names no resource | the same, as a backend of THAT MCP server (auto-discovered; a manual `agentglow.mcp.resource` wins) |
 | error: span status ERROR, HTTP status >= 500 | `request` with `error: true` (always sent individually within the cap) and counted in `service_stats.errors` |
 | PRODUCER span ending with status ERROR (a publish that raised) | `message` with `failed: true` (a comet that fizzles) to the topic's last known consumer, else back to the producer |
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 RUN = "services"
 GROUP = "backend"  # synthetic MCP-style server holding the external HTTP / RPC hosts the services call
+API_PREFIX = "api:"  # synthetic external API node per HTTP / RPC host (`api:payments:9100`), `mcp_register` kind "api"
 DB_PREFIX = "db:"  # synthetic database server per `db.system` (`db:elasticsearch`), `mcp_register` kind "database"
 HV_RATE = float(os.environ.get("AGENTGLOW_SERVICE_HV_RATE", "5"))  # per service, requests/s sent individually
 CAP = int(os.environ.get("AGENTGLOW_SERVICE_CAP", "20"))  # individual request events/s, all services
@@ -180,6 +181,8 @@ def _register(server: str, name: str, kind: str, ts: int) -> dict:
     ev = {"type": "mcp_register", "server": server, "resources": [{"name": name, "kind": kind}], "ts": ts}
     if server.startswith(DB_PREFIX):
         ev["kind"] = "database"
+    elif server.startswith(API_PREFIX):
+        ev["kind"] = "api"
     return ev
 
 
@@ -388,8 +391,8 @@ class Services:
             db = db_target(a)
             if db:  # a database node of its own (not the synthetic `backend` group)
                 server, res = db[0], (db[1], db[2])
-            else:
-                server = GROUP
+            else:  # an external API node per host
+                server = API_PREFIX + res[0]
         else:
             return
         owner = self.m._owner(s, out)
@@ -633,7 +636,7 @@ class Services:
             if res:
                 rk = str(e.get("kind") or "api")
                 rk = rk if rk in ("db", "warehouse", "spark", "api", "storage", "queue") else "api"
-                server = GROUP
+                server = API_PREFIX + res if rk == "api" else GROUP
                 if rk in ("db", "warehouse"):  # a database node `db:<to>`, resource = `collection` when given
                     server, res = DB_PREFIX + res, label(e.get("collection"), 32) or res
                 if (server, res) not in self.known:

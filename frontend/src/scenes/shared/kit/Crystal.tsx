@@ -12,6 +12,8 @@
  *   model group -> (mcp_register kind "model") a gyroscope hub: a glowing sphere in two crossed spinning rings, colored
  *                 by what it holds; its models are satellites, an LLM (indigo, speech-bubble glyph, tag `llm`) clearly
  *                 apart from a classic ML model (pink, node glyph, tag `ml model`).
+ *   external API -> (mcp_register kind "api", `api:<host>`) a wireframe globe labelled "API · <host>", a ring pings
+ *                 out on each call (no satellite: the node is the host).
  *   database   -> (mcp_register kind "database", `db:<system>` servers) a glowing stack of three discs, the classic DB
  *                 cylinder, labelled "Database · <system>"; each query sends a bright ring up the stack and flashes the
  *                 disc rims, while queries are in flight the rims stay lit. Its collections / tables / indices are the
@@ -181,7 +183,88 @@ function tinted(srv: McpServer, st: CrystalStyle) {
 
 /** Kit McpServer slot: a faceted crystal with a hot core; a database node (kind "database") is a disc stack instead. */
 export function McpCrystal({ mcp }: { mcp: KitMcp }) {
-  return mcp.srv.kind === "database" ? <DbStack mcp={mcp} /> : mcp.srv.kind === "model" ? <ModelHub mcp={mcp} /> : <GemCrystal mcp={mcp} />;
+  const k = mcp.srv.kind;
+  return k === "database" ? <DbStack mcp={mcp} /> : k === "model" ? <ModelHub mcp={mcp} /> : k === "api" ? <ApiGlobe mcp={mcp} /> : <GemCrystal mcp={mcp} />;
+}
+
+// ------------------------------------------------------------------ external API node: a wireframe globe
+const GLOBE_R = 0.62;
+const GLOBE_GEO = new THREE.SphereGeometry(GLOBE_R, 32, 24);
+/** meridians (rotated about y) and parallels (scaled + shifted circles) of the globe */
+const GLOBE_LINES: { rot: number; y: number; r: number }[] = [
+  ...[0, 1, 2, 3].map((i) => ({ rot: (i / 4) * Math.PI, y: NaN, r: GLOBE_R })),
+  ...[-0.55, 0, 0.55].map((f) => ({ rot: 0, y: f * GLOBE_R, r: GLOBE_R * Math.sqrt(1 - f * f) })),
+];
+
+/**
+ * Kit external API node (mcp_register kind "api", `api:<host>`): a glowing wireframe globe turning slowly, labelled
+ * "API · <host>". A call flashes the grid and sends a ring out from the equator; in-flight calls keep it lit.
+ */
+function ApiGlobe({ mcp }: { mcp: KitMcp }) {
+  const st = useContext(CrystalStyleCtx);
+  const srv = mcp.srv;
+  const col = useMemo(() => tinted(srv, st), [srv, st]);
+  const seed = useMemo(() => hash01(srv.name, 7), [srv.name]);
+  const m = useMemo(
+    () => ({
+      body: gemMat(0.35),
+      grid: new THREE.LineBasicMaterial({ color: "#000", transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+      ping: new THREE.LineBasicMaterial({ color: "#000", transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+      halo: spriteMat(),
+    }),
+    [],
+  );
+  const g = useRef<THREE.Group>(null);
+  const spin = useRef<THREE.Group>(null);
+  const ping = useRef<THREE.LineLoop>(null);
+  const s = useMemo(() => ({ a: seed * 6, calls: srv.calls, at: -1e9, flash: 0 }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useFrame(({ clock }, dt) => {
+    const now = performance.now();
+    g.current?.position.set(mcp.pos.x, mcp.pos.y + liftOf(st, srv), mcp.pos.z);
+    const busy = srv.inflight > 0;
+    const act = mcpGlow(srv.activeAt, now, 1.4);
+    const d = Math.min(dt, 0.05);
+    if (srv.calls !== s.calls) (s.calls = srv.calls), (s.at = now), (s.flash = 1);
+    s.flash = Math.max(0, s.flash - d * 1.6);
+    if (!reduced) s.a += (busy ? 1.4 : 0.25 + act * 0.6) * d;
+    const tt = reduced ? 0 : clock.elapsedTime;
+    spin.current?.rotation.set(0.38 + Math.sin(tt * 0.2 + seed * 4) * 0.06, s.a, 0.12, "XYZ");
+    const k = st.gain;
+    const u = m.body.uniforms;
+    u.uColor.value.copy(col);
+    u.uRim.value = (busy ? 2 : 1 + act * 0.7) + s.flash;
+    u.uGain.value = (busy ? 1.1 : 0.7 + act * 0.3 + s.flash * 0.3) * k;
+    u.uCore.value = (busy ? 0.2 : 0.05 + act * 0.1) * k;
+    m.grid.color.copy(col).lerp(WHITE, busy ? 0.4 : 0.15).multiplyScalar((busy ? 1.5 : 0.6 + act * 0.6 + s.flash * 1.1) * k);
+    const pu = (now - s.at) / 700;
+    const pl = ping.current;
+    if (pl) {
+      pl.visible = pu >= 0 && pu < 1 && !reduced;
+      pl.scale.setScalar(GLOBE_R * (1 + pu * 1.4));
+      m.ping.color.copy(WHITE).lerp(col, 0.4).multiplyScalar(1.6 * (1 - pu) * k);
+    }
+    m.halo.color.copy(col).multiplyScalar((busy ? 0.3 : 0.07 + act * 0.16 + s.flash * 0.15) * st.halo * k);
+  });
+  const R = GLOBE_R * st.size;
+  return (
+    <group ref={g}>
+      <group scale={st.size}>
+        {st.halo > 0 && <sprite material={m.halo} scale={GEM_R * 6} renderOrder={-1} />}
+        <group ref={spin}>
+          <mesh geometry={GLOBE_GEO} material={m.body} renderOrder={1} />
+          {GLOBE_LINES.map((l, i) =>
+            Number.isNaN(l.y) ? (
+              <lineLoop key={i} geometry={CIRCLE_GEO} material={m.grid} rotation={new THREE.Euler(Math.PI / 2, l.rot, 0, "YXZ")} scale={l.r * 1.01} renderOrder={2} />
+            ) : (
+              <lineLoop key={i} geometry={CIRCLE_GEO} material={m.grid} position-y={l.y} scale={l.r * 1.01} renderOrder={2} />
+            ),
+          )}
+        </group>
+        <lineLoop ref={ping} geometry={CIRCLE_GEO} material={m.ping} visible={false} renderOrder={3} />
+      </group>
+      <Label3D position={[0, R + 1.0, 0]} text={mcpTitle(srv)} color={srv.color} size={0.26} pxRange={[9, 13]} />
+    </group>
+  );
 }
 
 // ------------------------------------------------------------------ model group: a gyroscope hub

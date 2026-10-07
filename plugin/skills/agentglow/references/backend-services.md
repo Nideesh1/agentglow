@@ -100,7 +100,7 @@ A request that holds an `agentglow.job(id)` or a session is drawn by that node i
 Any OTel SDK can send OTLP/HTTP to `http://<server>:8100/v1/traces` (ended spans only). What makes a span a backend
 span: resource `service.name` (or attribute `agentglow.service`); a SERVER span with `http.request.method` /
 `http.route` (or `rpc.system`) = a request; a CONSUMER span with `messaging.system` = a consumed message; a PRODUCER
-span inside a request = a publish; CLIENT spans with `server.address` = resources of the `backend` group; CLIENT spans
+span inside a request = a publish; CLIENT spans with `server.address` = an external API node per host ("API · payments:9100"); CLIENT spans
 with `db.system` = a database node per system ("Database · postgresql") with `db.collection.name` (else `db.namespace`)
 as its collections. Node: node.md.
 Without OTel: events-http.md.

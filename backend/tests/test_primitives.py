@@ -508,7 +508,7 @@ def test_backend_http_call_result_carries_status_and_error(cap):
             pass
     evs, _ = feed(cap)
     res = of(evs, "mcp", phase="result")[0]
-    assert res["server"] == "backend" and res["resource"] == "payments:9100"
+    assert res["server"] == "api:payments:9100" and res["resource"] == "payments:9100"
     assert res["status"] == 503 and res["error"] is True and "123" not in str(res)
 
 

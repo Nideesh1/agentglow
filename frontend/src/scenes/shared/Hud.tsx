@@ -13,17 +13,36 @@ import { PrimDetail } from "./PrimPanel";
 import { ThemePicker } from "./ThemePicker";
 import { ResourceDetail, ServiceDetail } from "./ResourcePanel";
 import { clearSearch, cycleSearch, enterSearch, focusHit, setSearch, useSearch, search, type HitKind } from "./search";
-import { STALE_TEXT, useClearedAt, viewClearedAt, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, DB_PREFIX, serverLabel, type Instance, type Run, type WorldEvent } from "./world";
+import { STALE_TEXT, useClearedAt, viewClearedAt, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, DB_PREFIX, serverLabel, hasRealMcp, isRealMcp, type Instance, type Run, type WorldEvent } from "./world";
 
 export const SCENES = THEMES; // theme nav = every registered theme
 
+/** the long-lived backend services run (`services`, `services:<scope>`) */
+const isServicesRun = (run: string) => run === "services" || run.startsWith("services:");
 export function shortRun(run: string) {
-  return run.replace("run-", "").slice(0, 6);
+  return isServicesRun(run) ? "services" : run.replace("run-", "").slice(0, 6);
+}
+
+/** HUD totals of the side nodes by what they are (zeros omitted): "1 MCP", "1 DB", "3 models", "1 API" */
+function nodeCounts(): [number, string, string][] {
+  let mcp = 0, db = 0, models = 0, api = 0;
+  for (const s of world.mcpServers.values()) {
+    if (s.kind === "database") db++;
+    else if (s.kind === "model") models += Math.max(1, s.resources.size);
+    else if (s.kind === "api") api++;
+    else if (isRealMcp(s)) mcp++;
+  }
+  const out: [number, string, string][] = [];
+  if (mcp) out.push([mcp, "MCP", "MCP servers called"]);
+  if (db) out.push([db, "DB", "databases queried"]);
+  if (models) out.push([models, models === 1 ? "model" : "models", "models (LLM / ML) called"]);
+  if (api) out.push([api, api === 1 ? "API" : "APIs", "external API hosts called"]);
+  return out;
 }
 
 function short(id: string) {
   const inst = world.instances.get(id) ?? world.archive.get(id);
-  if (inst) return `${inst.name} · ${shortRun(inst.run)}`;
+  if (inst) return isServicesRun(inst.run) ? inst.name : `${inst.name} · ${shortRun(inst.run)}`;
   const [run, type, k] = id.split(":");
   return `${type ?? id.slice(0, 6)}${k !== undefined ? `#${Number(k) + 1}` : ""} · ${shortRun(run)}`;
 }
@@ -425,11 +444,11 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
                   <b>{fmtK(w.stats.requests)}</b> req{w.stats.errors > 0 ? ` · ${fmtK(w.stats.errors)} err` : ""}
                 </span>
               )}
-              {w.stats.mcpCalls > 0 && (
-                <span className="hud-stat" title="MCP calls">
-                  <b>{w.stats.mcpCalls}</b> MCP
+              {nodeCounts().map(([n, label, tip]) => (
+                <span key={label} className="hud-stat" title={tip}>
+                  <b>{n}</b> {label}
                 </span>
-              )}
+              ))}
             </div>
           </div>
           {info && <div className="hud-sub">{subtitle}</div>}
@@ -1331,10 +1350,12 @@ function AgentDetail({ i }: { i: Instance }) {
           <dt>tool calls</dt>
           <dd>{i.toolCalls}</dd>
         </div>
-        <div>
-          <dt>MCP calls</dt>
-          <dd>{i.mcpCalls}</dd>
-        </div>
+        {(i.mcpCalls > 0 || hasRealMcp()) && (
+          <div>
+            <dt>{hasRealMcp() ? "MCP calls" : "backend calls"}</dt>
+            <dd>{i.mcpCalls}</dd>
+          </div>
+        )}
       </dl>
       <section>
         <h4 className="ap-runhead">

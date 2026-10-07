@@ -160,10 +160,10 @@ def test_client_spans_light_up_backend_resources():
     evs = run(m, req, r1, r2, pay, pg)
     regs = {(e["server"], e["resources"][0]["name"], e["resources"][0]["kind"], e.get("kind")) for e in types(evs, "mcp_register")}
     # databases are database nodes of their own (`db:<system>`, kind "database"); HTTP hosts stay in `backend`
-    assert regs == {("db:redis", "redis", "db", "database"), ("backend", "payments.local:9100", "api", None),
+    assert regs == {("db:redis", "redis", "db", "database"), ("api:payments.local:9100", "payments.local:9100", "api", "api"),
                     ("db:postgresql", "shop", "db", "database")}
     calls = [(e["server"], e["resource"], e["phase"]) for e in types(evs, "mcp")]
-    assert sorted(calls) == sorted([(s, r, p) for s, r in (("db:redis", "redis"), ("backend", "payments.local:9100"), ("db:postgresql", "shop"))
+    assert sorted(calls) == sorted([(s, r, p) for s, r in (("db:redis", "redis"), ("api:payments.local:9100", "payments.local:9100"), ("db:postgresql", "shop"))
                                     for p in ("call", "result")])
     assert all(e["id"] == "svc:orders-api" for e in types(evs, "mcp"))
     assert not types(evs, "graph")  # a DB write inside a service is a resource, not a knowledge-graph write
@@ -206,8 +206,8 @@ def test_flat_db_call_is_a_database_node():
     evs = list(hub.topology.values()) + list(hub.buffer)
     reg = {e["server"]: e for e in types(evs, "mcp_register")}
     assert reg["db:postgres"]["kind"] == "database" and reg["db:postgres"]["resources"] == [{"name": "orders", "kind": "db"}]
-    assert "kind" not in reg["backend"]
-    assert {(e["server"], e["resource"]) for e in types(evs, "mcp")} == {("db:postgres", "orders"), ("backend", "stripe")}
+    assert reg["api:stripe"]["kind"] == "api"
+    assert {(e["server"], e["resource"]) for e in types(evs, "mcp")} == {("db:postgres", "orders"), ("api:stripe", "stripe")}
 
 
 def test_hub_topology_keeps_database_kind():

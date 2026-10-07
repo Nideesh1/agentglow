@@ -29,9 +29,10 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
     {
       type: "mcp_register",
       server: "backend",
-      resources: [{ name: "redis", kind: "cache" }, { name: "orders", kind: "queue" }, { name: "payments:9100", kind: "api" }],
+      resources: [{ name: "redis", kind: "cache" }, { name: "orders", kind: "queue" }],
       ts: ts(),
     },
+    { type: "mcp_register", server: "api:payments:9100", kind: "api", resources: [{ name: "payments:9100", kind: "api" }], ts: ts() },
     // a database node (`db.system` spans of the services): one per system, its tables as satellites
     { type: "mcp_register", server: "db:postgresql", kind: "database", resources: [{ name: "orders", kind: "db" }, { name: "customers", kind: "db" }], ts: ts() },
   ]);
@@ -127,7 +128,7 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
     call(API, "redis", "cache", k % 3 ? "GET" : "SET", 1);
     if (k % 2) call(API, "orders", "queue", "publish", 2);
     else call(WORKER, "orders", "queue", "process", 3);
-    if (k % 3 === 2) call(WORKER, "payments:9100", "api", "POST", 120 + (k % 7) * 20, k % 11 === 5 ? { status: 502, error: true } : { status: 200 });
+    if (k % 3 === 2) call(WORKER, "payments:9100", "api", "POST", 120 + (k % 7) * 20, k % 11 === 5 ? { status: 502, error: true } : { status: 200 }, "api:payments:9100");
     if (k % 6 === 0) emit([{ type: "rejected", run_id: run, id: API, reason: "at capacity", retry_after_ms: 2000, status: 503, ts: ts() }, { type: "request", run_id: run, id: API, service: "api", name: "POST /jobs", kind: "http", status: 503, error: false, rejected: true, ms: 2, ts: ts() }]);
     if (k % 8 === 1) {
       const ref = `ch_${1000 + k}`;

@@ -538,13 +538,30 @@ export type McpServer = {
   kind?: ServerKind;
 };
 /** The kind of an MCP-style server node (mcp_register `kind`). */
-export type ServerKind = "model" | "mcp" | "database";
+export type ServerKind = "model" | "mcp" | "database" | "api";
 /** Database nodes are synthetic servers `db:<system>` (backend.py); every label shows the system only. */
 export const DB_PREFIX = "db:";
 export const DB_COLOR = "#38bdf8";
+/** External API nodes are synthetic servers `api:<host>` (backend.py, kind "api"). */
+export const API_PREFIX = "api:";
+export const API_COLOR = "#a3e635";
+/** the synthetic group pools / models / caches join by default (labelled "Backend", not MCP) */
+export const BACKEND_GROUP = "backend";
+/** A real MCP server (not a database, model hub, external API or the synthetic backend group). */
+export const isRealMcp = (srv: Pick<McpServer, "kind" | "name">) => (srv.kind === undefined || srv.kind === "mcp") && srv.name !== BACKEND_GROUP;
+/** the session has drawn at least one real MCP server */
+export const hasRealMcp = () => {
+  for (const s of world.mcpServers.values()) if (isRealMcp(s)) return true;
+  return false;
+};
 export const isDatabase = (srv: Pick<McpServer, "kind"> | undefined) => srv?.kind === "database";
 /** Display name of a server: `db:elasticsearch` -> `elasticsearch`, anything else unchanged. */
-export const serverLabel = (name: string) => (name.startsWith(DB_PREFIX) && world.mcpKinds.get(name) === "database" ? name.slice(DB_PREFIX.length) : name);
+export const serverLabel = (name: string) =>
+  name.startsWith(DB_PREFIX) && world.mcpKinds.get(name) === "database"
+    ? name.slice(DB_PREFIX.length)
+    : name.startsWith(API_PREFIX) && world.mcpKinds.get(name) === "api"
+      ? name.slice(API_PREFIX.length)
+      : name;
 /** What one resource of a database node is called: an index (search engines), a table (SQL), a collection. */
 export function collectionNoun(server: string): string {
   const sys = serverLabel(server).toLowerCase();
@@ -577,7 +594,7 @@ export type Flare = { id: number; run: string; instance: string; node: string; o
 /** Finished (exit done/failed) - drawn dimmed until its run ends, then faded out with the whole run. */
 /** The label prefix of an MCP-style server: "ML" for a resource group holding only models, else "MCP". */
 export const mcpPrefix = (srv: Pick<McpServer, "kind"> & { name?: string }) =>
-  srv.kind === "model" ? modelGroupPrefix(srv.name) : srv.kind === "database" ? "Database" : "MCP";
+  srv.kind === "model" ? modelGroupPrefix(srv.name) : srv.kind === "database" ? "Database" : srv.kind === "api" ? "API" : srv.name === BACKEND_GROUP ? "Backend" : "MCP";
 /** A model group's label prefix from what it holds: "LLM" (only language models), "ML" (only classic ML models, or
  *  nothing known yet: the label older streams got), "Models" (both). */
 export function modelGroupPrefix(name: string | undefined): string {
@@ -588,9 +605,12 @@ export function modelGroupPrefix(name: string | undefined): string {
   }
   return kinds.has("llm") ? (kinds.has("model") ? "Models" : "LLM") : "ML";
 }
-/** "MCP · backend", "ML · payment-integrity scorer", "LLM · mistral", "Database · elasticsearch": the one server label
+/** "MCP · github", "Backend", "API · api.mistral.ai", "ML · payment-integrity scorer", "LLM · mistral", "Database · elasticsearch": the one server label
  *  every theme draws. */
-export const mcpTitle = (srv: Pick<McpServer, "kind" | "name">) => `${mcpPrefix(srv)} · ${srv.kind === "database" ? srv.name.replace(DB_PREFIX, "") : srv.name}`;
+export const mcpTitle = (srv: Pick<McpServer, "kind" | "name">) =>
+  srv.kind === undefined && srv.name === BACKEND_GROUP
+    ? "Backend"
+    : `${mcpPrefix(srv)} · ${srv.kind === "database" ? srv.name.replace(DB_PREFIX, "") : srv.kind === "api" ? srv.name.replace(API_PREFIX, "") : srv.name}`;
 
 export const isDone = (i: Instance) => i.doneAt > 0;
 /** Working: not finished and not fading out (HUD "alive", LOD budget, cluster counts). */
@@ -1382,6 +1402,7 @@ function applyNow(ev: WorldEvent) {
         if (drawn) {
           drawn.kind = ev.kind;
           if (ev.kind === "database" && !MCP_COLORS[ev.server]) drawn.color = DB_COLOR;
+          if (ev.kind === "api" && !MCP_COLORS[ev.server]) drawn.color = API_COLOR;
         }
       }
       break;
@@ -1390,7 +1411,7 @@ function applyNow(ev: WorldEvent) {
       let srv = world.mcpServers.get(ev.server);
       if (!srv) {
         const kind = world.mcpKinds.get(ev.server);
-        srv = { name: ev.server, color: MCP_COLORS[ev.server] ?? (kind === "database" ? DB_COLOR : "#94a3b8"), slot: world.mcpServers.size, activeAt: now, calls: 0, inflight: 0, resources: new Map(), kind };
+        srv = { name: ev.server, color: MCP_COLORS[ev.server] ?? (kind === "database" ? DB_COLOR : kind === "api" ? API_COLOR : "#94a3b8"), slot: world.mcpServers.size, activeAt: now, calls: 0, inflight: 0, resources: new Map(), kind };
         world.mcpServers.set(ev.server, srv);
       }
       srv.activeAt = now;
