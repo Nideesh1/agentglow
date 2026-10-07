@@ -151,7 +151,7 @@ export function Soma({ agent, onSelect }: AgentSlotProps) {
       halo.current.scale.setScalar(Math.max(0.0001, sc * (thinking ? 2.3 + pulse * 0.3 : 1.6) + e * 0.35));
       m.halo.color.copy(color).multiplyScalar((thinking ? 0.22 : 0.09) * (1 - wither) + e * 0.06);
     }
-    labelG.current?.position.set(0, -0.78 * agent.scale - 0.25, 0);
+    labelG.current?.position.set(0, -0.95 * agent.scale - 0.3, 0); // top-anchored: the plate hangs below the node
     if (label.current) {
       const on = showLabel(inst.id);
       s.labelK += ((on ? 1 : 0) - s.labelK) * 0.12;
@@ -221,6 +221,7 @@ export function Soma({ agent, onSelect }: AgentSlotProps) {
             live={inst.job ? () => jobText(inst) : null}
             color={TYPE_COLOR[inst.type]}
             size={inst.subagent ? 0.22 : 0.3}
+            anchorY="top"
             opacity={0}
             fit
             pxRange={inst.subagent ? [8, 12] : [9, 14]}

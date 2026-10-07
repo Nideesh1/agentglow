@@ -10,19 +10,39 @@ import { decisionTint } from "./kit/DecisionGlyph";
 import { haloHover } from "./kit/HighVolume";
 import { fmtMs, gaugeText, jobStateText, metricText } from "./prims";
 import { PrimDetail } from "./PrimPanel";
+import { ThemePicker } from "./ThemePicker";
 import { ResourceDetail, ServiceDetail } from "./ResourcePanel";
 import { clearSearch, cycleSearch, enterSearch, focusHit, setSearch, useSearch, search, type HitKind } from "./search";
-import { STALE_TEXT, useClearedAt, viewClearedAt, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, type Instance, type Run, type WorldEvent } from "./world";
+import { STALE_TEXT, useClearedAt, viewClearedAt, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, DB_PREFIX, serverLabel, hasRealMcp, isRealMcp, type Instance, type Run, type WorldEvent } from "./world";
 
 export const SCENES = THEMES; // theme nav = every registered theme
 
+/** the long-lived backend services run (`services`, `services:<scope>`) */
+const isServicesRun = (run: string) => run === "services" || run.startsWith("services:");
 export function shortRun(run: string) {
-  return run.replace("run-", "").slice(0, 6);
+  return isServicesRun(run) ? "services" : run.replace("run-", "").slice(0, 6);
+}
+
+/** HUD totals of the side nodes by what they are (zeros omitted): "1 MCP", "1 DB", "3 models", "1 API" */
+function nodeCounts(): [number, string, string][] {
+  let mcp = 0, db = 0, models = 0, api = 0;
+  for (const s of world.mcpServers.values()) {
+    if (s.kind === "database") db++;
+    else if (s.kind === "model") models += Math.max(1, s.resources.size);
+    else if (s.kind === "api") api++;
+    else if (isRealMcp(s)) mcp++;
+  }
+  const out: [number, string, string][] = [];
+  if (mcp) out.push([mcp, "MCP", "MCP servers called"]);
+  if (db) out.push([db, "DB", "databases queried"]);
+  if (models) out.push([models, models === 1 ? "model" : "models", "models (LLM / ML) called"]);
+  if (api) out.push([api, api === 1 ? "API" : "APIs", "external API hosts called"]);
+  return out;
 }
 
 function short(id: string) {
   const inst = world.instances.get(id) ?? world.archive.get(id);
-  if (inst) return `${inst.name} · ${shortRun(inst.run)}`;
+  if (inst) return isServicesRun(inst.run) ? inst.name : `${inst.name} · ${shortRun(inst.run)}`;
   const [run, type, k] = id.split(":");
   return `${type ?? id.slice(0, 6)}${k !== undefined ? `#${Number(k) + 1}` : ""} · ${shortRun(run)}`;
 }
@@ -51,9 +71,11 @@ export function describe(e: WorldEvent): string {
     case "graph_nodes":
       return `graph: ${e.nodes.length} touched nodes restored`;
     case "mcp":
+      if (e.server.startsWith(DB_PREFIX) && world.mcpKinds.get(e.server) === "database")
+        return e.phase === "call" ? `${short(e.id)} → db ${serverLabel(e.server)}.${e.tool}()${e.resource ? ` → ${e.resource}` : ""}` : `db ${serverLabel(e.server)}.${e.tool} returned${e.latency_ms ? ` · ${Math.round(e.latency_ms)}ms` : ""}`;
       return e.phase === "call" ? `${short(e.id)} → mcp ${e.server}.${e.tool}()${e.resource ? ` → ${e.resource}` : ""}` : `mcp ${e.server}.${e.tool} returned${e.latency_ms ? ` · ${Math.round(e.latency_ms)}ms` : ""}`;
     case "mcp_register":
-      return `mcp server ${e.server} online`;
+      return e.kind === "database" ? `database ${serverLabel(e.server)} online` : `mcp server ${e.server} online`;
     case "skill":
       return e.status === "start" ? `${short(e.id)} · skill: ${e.name}` : `${short(e.id)} · skill: ${e.name} done`;
     case "decision":
@@ -188,7 +210,7 @@ function saveSide(v: { collapsed: boolean; tab: Tab }) {
 const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 
 function HudPanels({ title, subtitle, onClose, inset, children }: { title: string; subtitle: string; selected?: string | null; onClose?: () => void; inset?: ReactNode; children?: ReactNode }) {
-  const { embedded, scope, run: runFilter, clearable = true } = useSceneConfig();
+  const { embedded, scope, run: runFilter, clearable = true, theme, themePicker = true, onThemeChange } = useSceneConfig();
   const clearedAt = useClearedAt();
   const canRun = useRunAvailable();
   const canApprove = useApproveAvailable();
@@ -328,10 +350,14 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
       <div ref={topRef} className={`hud-topwrap${side.collapsed ? " is-rail" : ""}`}>
         <header className="hud hud-top">
           <div className="hud-bar">
-            <div className="hud-title">
-              <span className="hud-dot" />
-              {title}
-            </div>
+            {themePicker && onThemeChange ? (
+              <ThemePicker title={title} current={theme} onPick={onThemeChange} galleryHref={embedded ? undefined : `${base}${qs}`} />
+            ) : (
+              <div className="hud-title">
+                <span className="hud-dot" />
+                {title}
+              </div>
+            )}
             {w.mode === "sim" && <span className="hud-badge">sim</span>}
             {w.mode === "live" && !w.unauthorized && <span className="hud-badge hud-badge--live">live</span>}
             {scope && <FilterChip label="scope" value={scope} />}
@@ -354,7 +380,7 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
             </button>
             {clearable && !w.unauthorized && <ClearButton clearedAt={clearedAt} />}
             {w.mode === "live" && canRun && <RunButton />}
-            {!embedded && (
+            {!embedded && !(themePicker && onThemeChange) && (
               <select className="hud-theme" value={here} aria-label="Theme" onChange={(e) => (location.href = `${base}${e.target.value}${import.meta.env.VITE_DEMO === "1" && e.target.value ? "/" : ""}${qs}`)}>
                 <option value="">all themes</option>
                 {SCENES.map((s) => (
@@ -418,11 +444,11 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
                   <b>{fmtK(w.stats.requests)}</b> req{w.stats.errors > 0 ? ` · ${fmtK(w.stats.errors)} err` : ""}
                 </span>
               )}
-              {w.stats.mcpCalls > 0 && (
-                <span className="hud-stat" title="MCP calls">
-                  <b>{w.stats.mcpCalls}</b> MCP
+              {nodeCounts().map(([n, label, tip]) => (
+                <span key={label} className="hud-stat" title={tip}>
+                  <b>{n}</b> {label}
                 </span>
-              )}
+              ))}
             </div>
           </div>
           {info && <div className="hud-sub">{subtitle}</div>}
@@ -480,7 +506,7 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
               <AgentDetail i={sel} />
             </>
           ) : (
-            <p className="hs-empty">Click an agent, an MCP server, a backend or a link in the scene (or the Agents list / Events log) to inspect it.</p>
+            <p className="hs-empty">Click an agent, an MCP server, a database, a backend or a link in the scene (or the Agents list / Events log) to inspect it.</p>
           )}
         </div>
       </aside>
@@ -816,7 +842,7 @@ function recentContext(i: Instance, n = 6): CtxRow[] {
   for (const e of i.recent) {
     if (calls >= 5) break;
     if (e.type === "tool") rows.push({ k: `t${calls++}`, badge: "tool", text: e.tool, ts: e.ts });
-    else if (e.type === "mcp" && e.phase === "call") rows.push({ k: `m${calls++}`, badge: "MCP", text: `${e.server} · ${e.tool}`, ts: e.ts });
+    else if (e.type === "mcp" && e.phase === "call") rows.push({ k: `m${calls++}`, badge: world.mcpKinds.get(e.server) === "database" ? "DB" : "MCP", text: `${serverLabel(e.server)} · ${e.tool}`, ts: e.ts });
   }
   return rows.sort((a, b) => b.ts - a.ts).slice(0, n);
 }
@@ -1324,10 +1350,12 @@ function AgentDetail({ i }: { i: Instance }) {
           <dt>tool calls</dt>
           <dd>{i.toolCalls}</dd>
         </div>
-        <div>
-          <dt>MCP calls</dt>
-          <dd>{i.mcpCalls}</dd>
-        </div>
+        {(i.mcpCalls > 0 || hasRealMcp()) && (
+          <div>
+            <dt>{hasRealMcp() ? "MCP calls" : "backend calls"}</dt>
+            <dd>{i.mcpCalls}</dd>
+          </div>
+        )}
       </dl>
       <section>
         <h4 className="ap-runhead">

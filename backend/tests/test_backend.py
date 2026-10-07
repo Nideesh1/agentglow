@@ -158,12 +158,65 @@ def test_client_spans_light_up_backend_resources():
     pay = span("POST", kind="client", parent=req["span_id"], **{"http.method": "POST", "url.full": "http://payments.local:9100/charge?card=1"})
     pg = span("INSERT orders", kind="client", parent=req["span_id"], **{"db.system": "postgresql", "db.name": "shop", "db.statement": "INSERT INTO orders"})
     evs = run(m, req, r1, r2, pay, pg)
-    regs = {(e["server"], e["resources"][0]["name"], e["resources"][0]["kind"]) for e in types(evs, "mcp_register")}
-    assert regs == {("backend", "redis", "db"), ("backend", "payments.local:9100", "api"), ("backend", "postgresql:shop", "db")}
-    calls = [(e["resource"], e["phase"]) for e in types(evs, "mcp")]
-    assert sorted(calls) == sorted([(r, p) for r in ("redis", "payments.local:9100", "postgresql:shop") for p in ("call", "result")])
+    regs = {(e["server"], e["resources"][0]["name"], e["resources"][0]["kind"], e.get("kind")) for e in types(evs, "mcp_register")}
+    # databases are database nodes of their own (`db:<system>`, kind "database"); HTTP hosts stay in `backend`
+    assert regs == {("db:redis", "redis", "db", "database"), ("api:payments.local:9100", "payments.local:9100", "api", "api"),
+                    ("db:postgresql", "shop", "db", "database")}
+    calls = [(e["server"], e["resource"], e["phase"]) for e in types(evs, "mcp")]
+    assert sorted(calls) == sorted([(s, r, p) for s, r in (("db:redis", "redis"), ("api:payments.local:9100", "payments.local:9100"), ("db:postgresql", "shop"))
+                                    for p in ("call", "result")])
     assert all(e["id"] == "svc:orders-api" for e in types(evs, "mcp"))
     assert not types(evs, "graph")  # a DB write inside a service is a resource, not a knowledge-graph write
+
+
+def test_database_node_per_system_with_collections():
+    """One database node per db.system; collections / tables / indices are its resources, each query a call on it."""
+    m = Mapper()
+    req = http(path="/search")
+    es = lambda idx, t0: span(f"elasticsearch {idx}", kind="client", parent=req["span_id"], t0=t0, **{  # noqa: E731
+        "db.system": "elasticsearch", "db.namespace": idx, "db.collection.name": idx, "db.operation.name": "search"})
+    pg = span("SELECT", kind="client", parent=req["span_id"], **{"db.system.name": "postgresql", "db.namespace": "shop", "db.sql.table": "orders",
+                                                                 "db.operation": "SELECT"})
+    evs = run(m, req, es("rides", T), es("zones", T + 1), es("rides", T + 400), pg)
+    regs = types(evs, "mcp_register")
+    assert {(e["server"], e["resources"][0]["name"]) for e in regs} == {("db:elasticsearch", "rides"), ("db:elasticsearch", "zones"),
+                                                                        ("db:postgresql", "orders")}
+    assert all(e["kind"] == "database" for e in regs)
+    calls = [(e["server"], e["resource"], e["tool"]) for e in types(evs, "mcp") if e["phase"] == "call"]
+    assert calls.count(("db:elasticsearch", "rides", "search")) == 2 and ("db:elasticsearch", "zones", "search") in calls
+    assert ("db:postgresql", "orders", "SELECT") in calls
+    assert not any(e["server"] == "backend" for e in types(evs, "mcp"))
+
+
+def test_database_under_mcp_stays_on_mcp_server():
+    """A DB call inside a real MCP tool span is still that MCP server's backend (no database node)."""
+    m = Mapper()
+    root = span("agent", kind="internal", **{"agentglow.agent": "a"})
+    tool = span("lookup", parent=root["span_id"], **{"agentglow.mcp.server": "shop", "agentglow.mcp.tool": "lookup"})
+    db = span("search", service="shop", kind="client", parent=tool["span_id"], **{"db.system": "elasticsearch", "db.collection.name": "rides"})
+    evs = run(m, root, tool, db)
+    assert {e["server"] for e in types(evs, "mcp")} == {"shop"}
+    assert not any(e.get("kind") == "database" for e in types(evs, "mcp_register"))
+
+
+def test_flat_db_call_is_a_database_node():
+    hub = Hub()
+    hub.ingest_events([{"service": "api", "event": "call", "to": "postgres", "kind": "db", "collection": "orders", "name": "SELECT"},
+                       {"service": "api", "event": "call", "to": "stripe", "name": "POST"}], T)
+    evs = list(hub.topology.values()) + list(hub.buffer)
+    reg = {e["server"]: e for e in types(evs, "mcp_register")}
+    assert reg["db:postgres"]["kind"] == "database" and reg["db:postgres"]["resources"] == [{"name": "orders", "kind": "db"}]
+    assert reg["api:stripe"]["kind"] == "api"
+    assert {(e["server"], e["resource"]) for e in types(evs, "mcp")} == {("db:postgres", "orders"), ("api:stripe", "stripe")}
+
+
+def test_hub_topology_keeps_database_kind():
+    hub = Hub()
+    req = http(path="/q")
+    db = span("q", kind="client", parent=req["span_id"], **{"db.system": "elasticsearch", "db.collection.name": "rides"})
+    hub.ingest_ended([db, req])
+    topo = [e for e in hub.replay() if e["type"] == "mcp_register"]
+    assert [(e["server"], e.get("kind"), e["resources"]) for e in topo] == [("db:elasticsearch", "database", [{"name": "rides", "kind": "db"}])]
 
 
 def test_genai_inside_request_owned_by_service():

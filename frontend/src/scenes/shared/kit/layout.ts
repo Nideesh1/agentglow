@@ -12,7 +12,7 @@
 import * as THREE from "three";
 import { clusterOf, isExpanded, isRunExpanded, LOD_LANES, lod } from "../lod";
 import { alt, jit } from "../spread";
-import { IDLE_DIM, graphMix, graphShown, isDone, isIdle, mcpWanted, roleScale, svcIdle, world, type AgentType, type Instance } from "../world";
+import { IDLE_DIM, graphMix, graphShown, isDone, isIdle, mcpWanted, roleScale, serverScale, svcIdle, world, type AgentType, type Instance } from "../world";
 import { fit, fitTick } from "./fit";
 import { radial, type LayoutPreset, type Point2, type PresetCtx, type Slot2 } from "./presets";
 import { kit, nextUid, planeNormal, planePoint, reduced, type KitAgent, type KitBackend, type KitMcp, type KitRun } from "./state";
@@ -774,7 +774,7 @@ function layoutPeriphery() {
       const m = servers[j];
       const extra = Math.floor(j / angles.length);
       const th = angles[j % angles.length] + extra * 0.18;
-      const rr = ring + 1 + extra * 2.6;
+      const rr = ring + serverScale(m.srv) + extra * 2.6;
       planePoint(Math.cos(th), Math.sin(th), m.out);
       planePoint(Math.cos(th) * rr, Math.sin(th) * rr, m.target);
       const nb = m.backends.size;
@@ -827,7 +827,7 @@ const RIM_NO_GRAPH = [0, 180, 35, -145, -35, 145, 70, -110, -70, 110].map((d) =>
 function column(list: KitMcp[], d: number, x0: number, hole: number) {
   if (!list.length) return;
   const fb = bStretch;
-  const H = (m: KitMcp) => Math.max(3, m.backends.size * 2.1 + 0.6) * fb;
+  const H = (m: KitMcp) => Math.max(3 * serverScale(m.srv), m.backends.size * 2.1 + 0.6) * fb;
   const top = hole > 0 ? Math.ceil(list.length / 2) : list.length;
   let b = 0;
   if (hole > 0) {
@@ -840,13 +840,14 @@ function column(list: KitMcp[], d: number, x0: number, hole: number) {
     const h = H(m);
     const cb = b - h / 2;
     planePoint(d, 0, m.out);
-    planePoint(d * (x0 + 1), cb, m.target);
+    const sc = serverScale(m.srv);
+    planePoint(d * (x0 + sc), cb, m.target);
     const nb = m.backends.size;
     let k = 0;
     for (const be of m.backends.values()) {
       be.k = k;
       be.n = nb;
-      planePoint(d * (x0 + 1 + 3.6), cb + ((nb - 1) / 2 - k) * 2.1 * fb, be.target);
+      planePoint(d * (x0 + sc + 3.6 * Math.min(sc, 1.6)), cb + ((nb - 1) / 2 - k) * 2.1 * fb, be.target);
       k++;
     }
     b -= h;
@@ -1000,7 +1001,8 @@ export function kitExtents(visit: (p: THREE.Vector3, r: number) => void, agentRa
   }
   for (const m of kit.mcp.values()) {
     if (!m.wanted) continue;
-    visit(m.target, 1.7);
+    const sc = serverScale(m.srv);
+    visit(m.target, 1.7 * sc);
     for (const b of m.backends.values()) visit(b.target, 1.4);
   }
   const g = kit.graph;

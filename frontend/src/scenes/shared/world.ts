@@ -72,7 +72,7 @@ export type WorldEvent =
   | { type: "order"; run_id: string; id: string; side: string; qty: number; price?: number; status: OrderStatus; instrument: string; dry_run: boolean; reason?: string; ts: number }
   // MCP tool call from an agent instance to an external MCP server ("call" when sent, "result" when it returns)
   // topology: an MCP server and the backends behind it (sent at worker startup and to every new viewer)
-  | { type: "mcp_register"; run_id?: string; server: string; resources: { name: string; kind: ResourceKind }[]; ts: number; kind?: "model" | "mcp" }
+  | { type: "mcp_register"; run_id?: string; server: string; resources: { name: string; kind: ResourceKind }[]; ts: number; kind?: ServerKind }
   | { type: "mcp"; run_id: string; id: string; server: string; tool: string; phase: "call" | "result"; latency_ms?: number; ts: number; resource?: string; resource_kind?: ResourceKind; units?: number; unit?: string; device?: string; error?: boolean; status?: number }
   // generic primitives (docs/SPEC.md "Generic primitives", prims.ts)
   | PrimWorldEvent;
@@ -224,11 +224,12 @@ export function orderText(o: { side: string; qty: number; price?: number; status
 }
 
 /** What sits behind an MCP server (the server is a node; its backends are nodes too). */
-export type ResourceKind = "db" | "warehouse" | "spark" | "api" | "storage" | "queue" | "model" | "gpu" | "worker" | "cache";
+/** `model` = a classic ML model (scorer, classifier, ASR...), `llm` = a language model (inference(kind="llm")) */
+export type ResourceKind = "db" | "warehouse" | "spark" | "api" | "storage" | "queue" | "model" | "llm" | "gpu" | "worker" | "cache";
 /** the six shapes every theme draws: newer kinds map onto the closest one (model / gpu -> spark, worker -> storage, cache -> db) */
 export type ShapeKind = "db" | "warehouse" | "spark" | "api" | "storage" | "queue";
 export const shapeKind = (k: string | undefined): ShapeKind =>
-  k === "model" || k === "gpu" ? "spark" : k === "worker" ? "storage" : k === "cache" ? "db" : k === "db" || k === "warehouse" || k === "spark" || k === "storage" || k === "queue" ? k : "api";
+  k === "model" || k === "llm" || k === "gpu" ? "spark" : k === "worker" ? "storage" : k === "cache" ? "db" : k === "db" || k === "warehouse" || k === "spark" || k === "storage" || k === "queue" ? k : "api";
 
 export const AGENT_TYPES: { type: AgentType; label: string; color: string }[] = [
   { type: "planner", label: "Planner", color: "#a78bfa" },
@@ -532,9 +533,53 @@ export const cometOn = (c: Comet, now = performance.now()) => (now - c.start) / 
 export type McpResource = { name: string; kind: ShapeKind; sub: ResourceKind; activeAt: number; inflight: number; calls: number };
 export type McpServer = {
   name: string; color: string; slot: number; activeAt: number; calls: number; inflight: number; resources: Map<string, McpResource>;
-  /** a named resource group's kind (mcp_register `kind`): "model" = only models (labelled "ML"); absent = MCP */
-  kind?: "model" | "mcp";
+  /** mcp_register `kind`: "model" = a resource group of only models (labelled "ML"), "database" = a database node
+   *  (`db:<system>`, labelled "Database", its resources are collections / tables / indices); absent = MCP */
+  kind?: ServerKind;
 };
+/** The kind of an MCP-style server node (mcp_register `kind`). */
+export type ServerKind = "model" | "mcp" | "database" | "api";
+/** Database nodes are synthetic servers `db:<system>` (backend.py); every label shows the system only. */
+export const DB_PREFIX = "db:";
+export const DB_COLOR = "#38bdf8";
+/** External API nodes are synthetic servers `api:<host>` (backend.py, kind "api"). */
+export const API_PREFIX = "api:";
+export const API_COLOR = "#a3e635";
+/** the synthetic group pools / models / caches join by default (labelled "Backend", not MCP) */
+export const BACKEND_GROUP = "backend";
+/** A real MCP server (not a database, model hub, external API or the synthetic backend group). */
+export const isRealMcp = (srv: Pick<McpServer, "kind" | "name">) => (srv.kind === undefined || srv.kind === "mcp") && srv.name !== BACKEND_GROUP;
+/**
+ * Visual weight of a side node: databases, model hubs and external API globes are drawn at about a service sun's size
+ * (2.2x the MCP crystal), growing mildly with call volume (capped at +0.6); everything else 1.
+ */
+export const serverScale = (srv: Pick<McpServer, "kind" | "calls">) =>
+  srv.kind === "database" || srv.kind === "model" || srv.kind === "api" ? 2.2 + Math.min(0.6, Math.log10(1 + srv.calls) * 0.25) : 1;
+/** the session has drawn at least one real MCP server */
+export const hasRealMcp = () => {
+  for (const s of world.mcpServers.values()) if (isRealMcp(s)) return true;
+  return false;
+};
+export const isDatabase = (srv: Pick<McpServer, "kind"> | undefined) => srv?.kind === "database";
+/** Display name of a server: `db:elasticsearch` -> `elasticsearch`, anything else unchanged. */
+export const serverLabel = (name: string) =>
+  name.startsWith(DB_PREFIX) && world.mcpKinds.get(name) === "database"
+    ? name.slice(DB_PREFIX.length)
+    : name.startsWith(API_PREFIX) && world.mcpKinds.get(name) === "api"
+      ? name.slice(API_PREFIX.length)
+      : name;
+/** What one resource of a database node is called: an index (search engines), a table (SQL), a collection. */
+export function collectionNoun(server: string): string {
+  const sys = serverLabel(server).toLowerCase();
+  if (/elastic|opensearch|solr|meili|typesense/.test(sys)) return "index";
+  if (/postgres|mysql|mariadb|sqlite|mssql|oracle|db2|cockroach|snowflake|bigquery|redshift|clickhouse|duckdb|trino|presto/.test(sys)) return "table";
+  if (/redis|valkey|memcache/.test(sys)) return "keyspace";
+  if (/falkor|neo4j|graph|memgraph/.test(sys)) return "graph";
+  return "collection";
+}
+const plural = (n: string) => (n === "index" ? "indices" : `${n}s`);
+/** "indices", "tables", "collections" */
+export const collectionNouns = (server: string) => plural(collectionNoun(server));
 /** One MCP request/response: a packet flying instance → server ("call") or server → instance ("result"). */
 export type McpCall = { id: number; run: string; instance: string; server: string; tool: string; resource?: string; phase: "call" | "result"; start: number; dur: number };
 /** An MCP call that has been sent but not answered yet: draw a live tether instance ↔ server while it waits. */
@@ -554,9 +599,24 @@ export type Flare = { id: number; run: string; instance: string; node: string; o
 
 /** Finished (exit done/failed) - drawn dimmed until its run ends, then faded out with the whole run. */
 /** The label prefix of an MCP-style server: "ML" for a resource group holding only models, else "MCP". */
-export const mcpPrefix = (srv: Pick<McpServer, "kind">) => (srv.kind === "model" ? "ML" : "MCP");
-/** "MCP · backend", "ML · payment-integrity scorer": the one server label every theme draws. */
-export const mcpTitle = (srv: Pick<McpServer, "kind" | "name">) => `${mcpPrefix(srv)} · ${srv.name}`;
+export const mcpPrefix = (srv: Pick<McpServer, "kind"> & { name?: string }) =>
+  srv.kind === "model" ? modelGroupPrefix(srv.name) : srv.kind === "database" ? "Database" : srv.kind === "api" ? "API" : srv.name === BACKEND_GROUP ? "Backend" : "MCP";
+/** A model group's label prefix from what it holds: "LLM" (only language models), "ML" (only classic ML models, or
+ *  nothing known yet: the label older streams got), "Models" (both). */
+export function modelGroupPrefix(name: string | undefined): string {
+  const kinds = new Set<string>();
+  if (name !== undefined) {
+    for (const k of world.mcpRegistry.get(name)?.values() ?? []) kinds.add(k);
+    for (const r of world.mcpServers.get(name)?.resources.values() ?? []) kinds.add(r.sub);
+  }
+  return kinds.has("llm") ? (kinds.has("model") ? "Models" : "LLM") : "ML";
+}
+/** "MCP · github", "Backend", "API · api.mistral.ai", "ML · payment-integrity scorer", "LLM · mistral", "Database · elasticsearch": the one server label
+ *  every theme draws. */
+export const mcpTitle = (srv: Pick<McpServer, "kind" | "name">) =>
+  srv.kind === undefined && srv.name === BACKEND_GROUP
+    ? "Backend"
+    : `${mcpPrefix(srv)} · ${srv.kind === "database" ? srv.name.replace(DB_PREFIX, "") : srv.kind === "api" ? srv.name.replace(API_PREFIX, "") : srv.name}`;
 
 export const isDone = (i: Instance) => i.doneAt > 0;
 /** Working: not finished and not fading out (HUD "alive", LOD budget, cluster counts). */
@@ -590,7 +650,7 @@ export const world = {
   /** registered (not necessarily used) MCP servers: server -> backend name -> kind */
   mcpRegistry: new Map<string, Map<string, ResourceKind>>(),
   /** resource group kinds from mcp_register (`kind`), so a server drawn later gets its ML / MCP label */
-  mcpKinds: new Map<string, "model" | "mcp">(),
+  mcpKinds: new Map<string, ServerKind>(),
   mcpCalls: [] as McpCall[],
   /** in-flight MCP calls keyed `${instance}|${server}|${tool}`; resolvedAt kept briefly for a "snap back" effect */
   mcpPending: new Map<string, McpPending>(),
@@ -1345,14 +1405,19 @@ function applyNow(ev: WorldEvent) {
       if (ev.kind) {
         world.mcpKinds.set(ev.server, ev.kind);
         const drawn = world.mcpServers.get(ev.server);
-        if (drawn) drawn.kind = ev.kind;
+        if (drawn) {
+          drawn.kind = ev.kind;
+          if (ev.kind === "database" && !MCP_COLORS[ev.server]) drawn.color = DB_COLOR;
+          if (ev.kind === "api" && !MCP_COLORS[ev.server]) drawn.color = API_COLOR;
+        }
       }
       break;
     }
     case "mcp": {
       let srv = world.mcpServers.get(ev.server);
       if (!srv) {
-        srv = { name: ev.server, color: MCP_COLORS[ev.server] ?? "#94a3b8", slot: world.mcpServers.size, activeAt: now, calls: 0, inflight: 0, resources: new Map(), kind: world.mcpKinds.get(ev.server) };
+        const kind = world.mcpKinds.get(ev.server);
+        srv = { name: ev.server, color: MCP_COLORS[ev.server] ?? (kind === "database" ? DB_COLOR : kind === "api" ? API_COLOR : "#94a3b8"), slot: world.mcpServers.size, activeAt: now, calls: 0, inflight: 0, resources: new Map(), kind };
         world.mcpServers.set(ev.server, srv);
       }
       srv.activeAt = now;

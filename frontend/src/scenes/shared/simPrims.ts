@@ -1,7 +1,7 @@
 /**
  * Simulator part for the generic primitives (`?sim=1`): a small services run next to the agent runs. Services `api`
  * and `worker` (lifecycle warming -> ready), a voice session with turns + gauges, jobs with stages / progress / a retry
- * and a dead-letter now and then, a model pool + cache resource with stats, a named model group (ML label), a gate, a fallback, a deferred callback,
+ * and a dead-letter now and then, a model pool + cache resource with stats, a database node (postgresql, two tables), a named model group (ML label), a gate, a fallback, a deferred callback,
  * rejected requests, a metric and a backlog between the two services. Generic names only.
  */
 import { slow } from "./simSpeed";
@@ -24,17 +24,22 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
     { type: "mcp_register", server: "backend", resources: [{ name: "asr-model", kind: "model" }, { name: "cache", kind: "cache" }], ts: ts() },
     // a named resource group of only models (`group=` / AGENTGLOW_RESOURCE_GROUP): labelled "ML · fraud scorer"
     { type: "mcp_register", server: "fraud scorer", kind: "model", resources: [{ name: "risk-model", kind: "model" }], ts: ts() },
+    // a group of language models (inference(kind="llm")): labelled "LLM · assistant"
+    { type: "mcp_register", server: "assistant", kind: "model", resources: [{ name: "chat-large", kind: "llm" }], ts: ts() },
     {
       type: "mcp_register",
       server: "backend",
-      resources: [{ name: "postgresql", kind: "db" }, { name: "redis", kind: "cache" }, { name: "orders", kind: "queue" }, { name: "payments:9100", kind: "api" }],
+      resources: [{ name: "redis", kind: "cache" }, { name: "orders", kind: "queue" }],
       ts: ts(),
     },
+    { type: "mcp_register", server: "api:payments:9100", kind: "api", resources: [{ name: "payments:9100", kind: "api" }], ts: ts() },
+    // a database node (`db.system` spans of the services): one per system, its tables as satellites
+    { type: "mcp_register", server: "db:postgresql", kind: "database", resources: [{ name: "orders", kind: "db" }, { name: "customers", kind: "db" }], ts: ts() },
   ]);
   // service backends (Resource details: operation mix, hit ratio, publish / consume, method + status mix)
-  const call = (id: string, resource: string, kind: "db" | "cache" | "queue" | "api", tool: string, ms: number, extra: { status?: number; error?: boolean } = {}) => {
-    emit({ type: "mcp", run_id: run, id, server: "backend", tool, phase: "call", resource, resource_kind: kind, ts: ts() });
-    at(ms, () => emit({ type: "mcp", run_id: run, id, server: "backend", tool, phase: "result", latency_ms: ms, resource, resource_kind: kind, ts: ts(), ...extra }));
+  const call = (id: string, resource: string, kind: "db" | "cache" | "queue" | "api", tool: string, ms: number, extra: { status?: number; error?: boolean } = {}, server = "backend") => {
+    emit({ type: "mcp", run_id: run, id, server, tool, phase: "call", resource, resource_kind: kind, ts: ts() });
+    at(ms, () => emit({ type: "mcp", run_id: run, id, server, tool, phase: "result", latency_ms: ms, resource, resource_kind: kind, ts: ts(), ...extra }));
   };
   at(4000, () => emit({ type: "lifecycle", run_id: run, id: WORKER, state: "ready", ts: ts() }));
 
@@ -113,13 +118,17 @@ export function runPrimSim(emit: (ev: WorldEvent | WorldEvent[]) => void): () =>
     if (k % 3 === 1) {
       emit({ type: "mcp", run_id: run, id: API, server: "fraud scorer", tool: "infer", phase: "call", resource: "risk-model", resource_kind: "model", ts: ts() });
       at(35, () => emit({ type: "mcp", run_id: run, id: API, server: "fraud scorer", tool: "infer", phase: "result", latency_ms: 35, resource: "risk-model", resource_kind: "model", units: 1, unit: "claims", ts: ts() }));
+      if (k % 4 === 1) {
+        emit({ type: "mcp", run_id: run, id: WORKER, server: "assistant", tool: "infer", phase: "call", resource: "chat-large", resource_kind: "llm", ts: ts() });
+        at(900, () => emit({ type: "mcp", run_id: run, id: WORKER, server: "assistant", tool: "infer", phase: "result", latency_ms: 900, resource: "chat-large", resource_kind: "llm", units: 1, unit: "calls", ts: ts() }));
+      }
     }
     const r = (k * 37) % 100;
-    call(API, "postgresql", "db", r < 60 ? "SELECT" : r < 85 ? "INSERT" : "UPDATE", r < 60 ? 4 + (k % 5) : 9 + (k % 13), r === 99 ? { error: true } : {});
+    call(API, k % 3 ? "orders" : "customers", "db", r < 60 ? "SELECT" : r < 85 ? "INSERT" : "UPDATE", r < 60 ? 4 + (k % 5) : 9 + (k % 13), r === 99 ? { error: true } : {}, "db:postgresql");
     call(API, "redis", "cache", k % 3 ? "GET" : "SET", 1);
     if (k % 2) call(API, "orders", "queue", "publish", 2);
     else call(WORKER, "orders", "queue", "process", 3);
-    if (k % 3 === 2) call(WORKER, "payments:9100", "api", "POST", 120 + (k % 7) * 20, k % 11 === 5 ? { status: 502, error: true } : { status: 200 });
+    if (k % 3 === 2) call(WORKER, "payments:9100", "api", "POST", 120 + (k % 7) * 20, k % 11 === 5 ? { status: 502, error: true } : { status: 200 }, "api:payments:9100");
     if (k % 6 === 0) emit([{ type: "rejected", run_id: run, id: API, reason: "at capacity", retry_after_ms: 2000, status: 503, ts: ts() }, { type: "request", run_id: run, id: API, service: "api", name: "POST /jobs", kind: "http", status: 503, error: false, rejected: true, ms: 2, ts: ts() }]);
     if (k % 8 === 1) {
       const ref = `ch_${1000 + k}`;

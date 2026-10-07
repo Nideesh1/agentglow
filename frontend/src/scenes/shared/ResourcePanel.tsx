@@ -8,10 +8,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { fmtMs } from "./prims";
 import { aggOf, opOf, pct, ratePerS, resInfo, sparkSeries, type Agg, type ResSel, type ToolAgg } from "./resinfo";
-import { getInstance, mcpTitle, selectInstance, selectResource, useWorld, world, type Instance, type ResourceKind } from "./world";
+import { collectionNoun, collectionNouns, getInstance, mcpTitle, modelGroupPrefix, selectInstance, selectResource, serverLabel, useWorld, world, type Instance, type ResourceKind } from "./world";
 
-const ICON: Record<string, string> = { server: "◆", link: "─", db: "▦", warehouse: "▥", storage: "▣", spark: "✶", api: "⇄", queue: "≡", model: "◈", gpu: "▧", worker: "▢", cache: "◎" };
-const KIND_TEXT: Record<string, string> = { db: "database", warehouse: "warehouse", storage: "object storage", spark: "compute", api: "HTTP host", queue: "queue / topic", model: "model", gpu: "GPU pool", worker: "worker pool", cache: "cache" };
+const ICON: Record<string, string> = { server: "◆", database: "⛁", link: "─", db: "▦", warehouse: "▥", storage: "▣", spark: "✶", api: "⇄", queue: "≡", model: "◈", llm: "✦", gpu: "▧", worker: "▢", cache: "◎" };
+const KIND_TEXT: Record<string, string> = { db: "database", warehouse: "warehouse", storage: "object storage", spark: "compute", api: "HTTP host", queue: "queue / topic", model: "ML model", llm: "LLM", gpu: "GPU pool", worker: "worker pool", cache: "cache" };
 const ERR = "#fb7185";
 const OK = "#4ade80";
 const AMBER = "#fbbf24";
@@ -114,6 +114,46 @@ function KindSection({ sel, a, kind }: { sel: ResSel; a: Agg; kind: string }) {
   if (sel.type === "server") {
     const srv = world.mcpServers.get(sel.server);
     const res = srv ? [...srv.resources.values()].sort((x, y) => y.calls - x.calls) : [];
+    if (srv?.kind === "database") {
+      // a database node: its collections / tables / indices with query counts, then the operation mix
+      const noun = collectionNoun(sel.server);
+      const ops = sortTools(a);
+      return (
+        <>
+          {res.length > 0 && (
+            <section>
+              <h4>{collectionNouns(sel.server).replace(/^./, (c) => c.toUpperCase())}</h4>
+              <table className="rp-table">
+                <thead>
+                  <tr>
+                    <th>{noun}</th>
+                    <th>queries</th>
+                    <th>p50</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {res.map((r) => {
+                    const ra = resInfo.backends.get(`${sel.server}|${r.name}`);
+                    return (
+                      <tr key={r.name} className="rp-click" onClick={() => selectResource({ type: "backend", server: sel.server, resource: r.name })} title={`details of ${noun} ${r.name}`}>
+                        <td title={r.name}>{r.name}</td>
+                        <td>{kfmt(ra?.calls ?? r.calls)}</td>
+                        <td>{ms(ra ? pct(ra.lat, 0.5) : undefined)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </section>
+          )}
+          <section>
+            <h4>Operations</h4>
+            <ToolTable tools={ops} label="operation" />
+            <p className="rp-note">operation names only: statements are never sent</p>
+          </section>
+        </>
+      );
+    }
     return (
       <>
         <section>
@@ -226,9 +266,11 @@ function KindSection({ sel, a, kind }: { sel: ResSel; a: Agg; kind: string }) {
         <p className="rp-note">host only: paths, ids and bodies are never sent</p>
       </>
     );
-  } else if (kind === "model") {
-    const units = st?.units ?? a.units;
-    if (units) rows.push(["units scored", `${kfmt(units)} ${st?.unit ?? a.unit ?? ""}`.trim()]);
+  } else if (kind === "model" || kind === "llm") {
+    // session total (counted from results) first: resource_stats units cover one window only
+    const units = a.units || st?.units;
+    const unit = a.unit ?? st?.unit ?? "";
+    if (units && unit !== "calls") rows.push([kind === "llm" ? "units" : "units scored", `${kfmt(units)} ${unit}`.trim()]);
     if (st?.rtf !== undefined) rows.push(["RTF", `${st.rtf}`]);
     if (a.device) rows.push(["device", a.device]);
     rows.push(["last latency", ms(a.lastMs)]);
@@ -268,16 +310,41 @@ export function ResourceDetail({ sel, onClose }: { sel: ResSel; onClose: () => v
   const a = aggOf(sel);
   const srv = world.mcpServers.get(sel.server);
   const color = srv?.color ?? "#94a3b8";
+  const isDb = srv?.kind === "database" || world.mcpKinds.get(sel.server) === "database";
   const kind: string = sel.type === "backend" ? (a?.kind ?? srv?.resources.get(sel.resource)?.sub ?? world.mcpRegistry.get(sel.server)?.get(sel.resource) ?? "api") : sel.type;
-  const title = sel.type === "server" ? mcpTitle({ name: sel.server, kind: srv?.kind ?? world.mcpKinds.get(sel.server) }) : sel.type === "backend" ? sel.resource : `${nameOf(sel.id)} → ${sel.server}`;
+  const isModel = sel.type === "backend" && (kind === "model" || kind === "llm");
+  const title =
+    sel.type === "server"
+      ? mcpTitle({ name: sel.server, kind: srv?.kind ?? world.mcpKinds.get(sel.server) })
+      : sel.type === "backend"
+        ? isModel
+          ? `${kind === "llm" ? "LLM" : "ML model"} · ${sel.resource}`
+          : sel.resource
+        : `${nameOf(sel.id)} → ${serverLabel(sel.server)}`;
+  // a model: "N predictions" (units scored, in their unit) or "N calls"
+  const modelCount = (() => {
+    if (!isModel) return "";
+    const st = world.resStats.get(`${sel.server}|${sel.type === "backend" ? sel.resource : ""}`);
+    const units = a?.units || st?.units;
+    const unit = a?.unit ?? st?.unit;
+    return units && unit && unit !== "calls" ? `${kfmt(units)} ${unit}` : `${kfmt(a?.calls ?? 0)} calls`;
+  })();
   const svcCaller = a && [...a.callers].filter(([id]) => id.startsWith("svc:")).sort((x, y) => y[1] - x[1])[0];
   const sub =
     sel.type === "server"
       ? srv?.kind === "model"
-        ? "model group"
-        : "MCP server / resource group"
-      : sel.type === "backend"
-        ? `${KIND_TEXT[kind] ?? kind} · in ${sel.server}${svcCaller ? ` · used by ${nameOf(svcCaller[0])}` : ""}`
+        ? `${modelGroupPrefix(sel.server) === "LLM" ? "LLM" : modelGroupPrefix(sel.server) === "ML" ? "ML model" : "model"} group`
+        : isDb
+          ? `database · ${srv?.resources.size ?? 0} ${srv?.resources.size === 1 ? collectionNoun(sel.server) : collectionNouns(sel.server)}`
+          : srv?.kind === "api" || world.mcpKinds.get(sel.server) === "api"
+            ? "external API host"
+            : sel.server === "backend" && !srv?.kind
+              ? "backend resources (pools, models, caches)"
+              : "MCP server / resource group"
+      : isModel
+        ? `${modelCount} · in ${sel.server}`
+        : sel.type === "backend"
+        ? `${isDb ? collectionNoun(sel.server) : (KIND_TEXT[kind] ?? kind)} · in ${isDb ? `database ${serverLabel(sel.server)}` : sel.server}${svcCaller ? ` · used by ${nameOf(svcCaller[0])}` : ""}`
         : "link";
   const callers = a ? [...a.callers].sort((x, y) => y[1] - x[1]).slice(0, 8) : [];
   return (
@@ -288,7 +355,7 @@ export function ResourceDetail({ sel, onClose }: { sel: ResSel; onClose: () => v
         </button>
       </div>
       <h3>
-        <span className="rp-icon">{ICON[kind] ?? "◆"}</span> {title} <small>{sub}</small>
+        <span className="rp-icon">{ICON[isDb && sel.type === "server" ? "database" : kind] ?? "◆"}</span> {title} <small>{sub}</small>
       </h3>
       {!a ? (
         <p className="hs-empty">No calls seen yet in this session.</p>
@@ -341,7 +408,7 @@ export function ResourceDetail({ sel, onClose }: { sel: ResSel; onClose: () => v
                 ↑ {nameOf(sel.id)}
               </button>
               <button className="ap-chip-link" style={{ ["--c" as string]: color }} onClick={() => selectResource({ type: "server", server: sel.server })}>
-                → {sel.server}
+                → {serverLabel(sel.server)}
               </button>
             </section>
           )}
@@ -430,7 +497,7 @@ export function ServiceDetail({ i }: { i: Instance }) {
             const server = k.slice(i.id.length + 1);
             return (
               <button key={k} className="ap-chip-link" style={{ ["--c" as string]: world.mcpServers.get(server)?.color ?? "#94a3b8" }} onClick={() => selectResource({ type: "link", id: i.id, server })}>
-                {[...a.resources.keys()].slice(0, 3).join(", ") || server} <em>{kfmt(a.calls)}</em>
+                {[...a.resources.keys()].slice(0, 3).join(", ") || serverLabel(server)} <em>{kfmt(a.calls)}</em>
               </button>
             );
           })}

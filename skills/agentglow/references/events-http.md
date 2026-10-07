@@ -26,7 +26,8 @@ curl -X POST localhost:8100/v1/events -H 'content-type: application/json' -d '[
 | `duration_ms` | latency |
 | `to` | `message`: the consuming service; `call`: the external system (`redis`, `postgres`, `payments-api`) |
 | `topic` | `message`: the comet label |
-| `kind` | `call`: `db`, `warehouse`, `spark`, `api`, `storage`, `queue` |
+| `kind` | `call`: `db`, `warehouse`, `spark`, `api`, `storage`, `queue` (`db` / `warehouse`: a database node named `to`; `api` (default): an external API node `to`) |
+| `collection` | `call` with `kind` `db` / `warehouse`: the table / index / collection (else `to`) |
 | `tokens_in`, `tokens_out` | `llm` |
 | `failed` | `message`: `true` = a publish that failed (the comet fizzles) |
 | `scope` | the tenant / user this event belongs to |
