@@ -17,7 +17,7 @@ import { useSyncExternalStore } from "react";
 import * as THREE from "three";
 import { flyHome, flyTo } from "./kit/fit";
 import { backendPos, kit, reduced, serverPos } from "./kit/state";
-import { isDismissed, selectInstance, selectResource, world } from "./world";
+import { collectionNoun, isDismissed, modelGroupPrefix, selectInstance, selectResource, serverLabel, world } from "./world";
 
 export type HitKind = "agent" | "run" | "server" | "backend" | "graph";
 export type Hit = { kind: HitKind; id: string; label: string; sub: string; server?: string; resource?: string };
@@ -133,17 +133,17 @@ function recompute() {
       if (hits.length < MAX_HITS) hits.push({ kind: "run", id: r.id, label: r.topic || r.id, sub: "run" });
     }
     for (const s of world.mcpServers.values()) {
-      const own = s.name.toLowerCase().includes(n);
+      const own = s.name.toLowerCase().includes(n) || (s.kind === "database" && "database".includes(n));
       if (own) {
         serverNames.add(s.name);
         servers.add(s.name);
-        if (hits.length < MAX_HITS) hits.push({ kind: "server", id: s.name, label: s.name, sub: s.kind === "model" ? "ML group" : "MCP server", server: s.name });
+        if (hits.length < MAX_HITS) hits.push({ kind: "server", id: s.name, label: serverLabel(s.name), sub: s.kind === "model" ? `${modelGroupPrefix(s.name)} group` : s.kind === "database" ? "database" : "MCP server", server: s.name });
       }
       for (const res of s.resources.values()) {
         if (!res.name.toLowerCase().includes(n)) continue;
         backends.add(`${s.name}|${res.name}`);
         servers.add(s.name);
-        if (hits.length < MAX_HITS) hits.push({ kind: "backend", id: `${s.name}|${res.name}`, label: res.name, sub: `${res.sub} · ${s.name}`, server: s.name, resource: res.name });
+        if (hits.length < MAX_HITS) hits.push({ kind: "backend", id: `${s.name}|${res.name}`, label: res.name, sub: `${s.kind === "database" ? collectionNoun(s.name) : res.sub} · ${serverLabel(s.name)}`, server: s.name, resource: res.name });
       }
     }
     for (const name of galaxyNames) {

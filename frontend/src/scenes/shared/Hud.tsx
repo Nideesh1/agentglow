@@ -12,7 +12,7 @@ import { fmtMs, gaugeText, jobStateText, metricText } from "./prims";
 import { PrimDetail } from "./PrimPanel";
 import { ResourceDetail, ServiceDetail } from "./ResourcePanel";
 import { clearSearch, cycleSearch, enterSearch, focusHit, setSearch, useSearch, search, type HitKind } from "./search";
-import { STALE_TEXT, useClearedAt, viewClearedAt, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, type Instance, type Run, type WorldEvent } from "./world";
+import { STALE_TEXT, useClearedAt, viewClearedAt, dismissRun, dismissedRuns, idleText, isDismissed, isIdle, undismissRuns, decisionText, getInstance, jobText, haltedNow, isStale, kindBadge, providerBadge, whyBadge, haloLatency, haloText, HALO_CATS, HALO_COLORS, hvActive, isDeny, isDone, isLive, orderText, routeSlots, selectInstance, selectResource, stepChips, TYPE_COLOR, useWorld, waitLabel, waitSeconds, world, DB_PREFIX, serverLabel, type Instance, type Run, type WorldEvent } from "./world";
 
 export const SCENES = THEMES; // theme nav = every registered theme
 
@@ -51,9 +51,11 @@ export function describe(e: WorldEvent): string {
     case "graph_nodes":
       return `graph: ${e.nodes.length} touched nodes restored`;
     case "mcp":
+      if (e.server.startsWith(DB_PREFIX) && world.mcpKinds.get(e.server) === "database")
+        return e.phase === "call" ? `${short(e.id)} → db ${serverLabel(e.server)}.${e.tool}()${e.resource ? ` → ${e.resource}` : ""}` : `db ${serverLabel(e.server)}.${e.tool} returned${e.latency_ms ? ` · ${Math.round(e.latency_ms)}ms` : ""}`;
       return e.phase === "call" ? `${short(e.id)} → mcp ${e.server}.${e.tool}()${e.resource ? ` → ${e.resource}` : ""}` : `mcp ${e.server}.${e.tool} returned${e.latency_ms ? ` · ${Math.round(e.latency_ms)}ms` : ""}`;
     case "mcp_register":
-      return `mcp server ${e.server} online`;
+      return e.kind === "database" ? `database ${serverLabel(e.server)} online` : `mcp server ${e.server} online`;
     case "skill":
       return e.status === "start" ? `${short(e.id)} · skill: ${e.name}` : `${short(e.id)} · skill: ${e.name} done`;
     case "decision":
@@ -480,7 +482,7 @@ function HudPanels({ title, subtitle, onClose, inset, children }: { title: strin
               <AgentDetail i={sel} />
             </>
           ) : (
-            <p className="hs-empty">Click an agent, an MCP server, a backend or a link in the scene (or the Agents list / Events log) to inspect it.</p>
+            <p className="hs-empty">Click an agent, an MCP server, a database, a backend or a link in the scene (or the Agents list / Events log) to inspect it.</p>
           )}
         </div>
       </aside>
@@ -816,7 +818,7 @@ function recentContext(i: Instance, n = 6): CtxRow[] {
   for (const e of i.recent) {
     if (calls >= 5) break;
     if (e.type === "tool") rows.push({ k: `t${calls++}`, badge: "tool", text: e.tool, ts: e.ts });
-    else if (e.type === "mcp" && e.phase === "call") rows.push({ k: `m${calls++}`, badge: "MCP", text: `${e.server} · ${e.tool}`, ts: e.ts });
+    else if (e.type === "mcp" && e.phase === "call") rows.push({ k: `m${calls++}`, badge: world.mcpKinds.get(e.server) === "database" ? "DB" : "MCP", text: `${serverLabel(e.server)} · ${e.tool}`, ts: e.ts });
   }
   return rows.sort((a, b) => b.ts - a.ts).slice(0, n);
 }

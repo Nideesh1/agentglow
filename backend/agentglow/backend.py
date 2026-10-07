@@ -10,7 +10,8 @@ exactly as before (a service only appears once it has backend spans).
 | a request still open after JOB_MS (a long-running handler) | a "job" subagent of the service named after the route / topic (at most MAX_JOBS live per service), owning the calls inside it until it ends (`exit` done / failed, then the usual `request`); `service_stats.inflight` = requests open 1 s or more |
 | PRODUCER span (`messaging.destination.name`) -> CONSUMER span of another service (OTel parent or link) | `message` comet producer service -> consumer service, text = the topic / stream |
 | an agent span (`agentglow.agent(...)`, GenAI invoke_agent, ...) inside a request | a short-lived subagent of the service (at most MAX_TASKS live per service; more run as the service itself) |
-| CLIENT span with `db.system` or HTTP inside a request | `mcp` call/result on the synthetic `backend` group, resource = the system (`redis`, `postgresql`, `payments:9100`) |
+| CLIENT span with `db.system` inside a request | `mcp` call/result on a synthetic database server `db:<system>` (`mcp_register` `kind: "database"`, drawn as a database node), resource = the collection / table / index, else the database name, else the system |
+| CLIENT span with HTTP inside a request | `mcp` call/result on the synthetic `backend` group, resource = the host (`payments:9100`) |
 | CLIENT span inside an MCP tool span (`agentglow.mcp.server`) that names no resource | the same, as a backend of THAT MCP server (auto-discovered; a manual `agentglow.mcp.resource` wins) |
 | error: span status ERROR, HTTP status >= 500 | `request` with `error: true` (always sent individually within the cap) and counted in `service_stats.errors` |
 | PRODUCER span ending with status ERROR (a publish that raised) | `message` with `failed: true` (a comet that fizzles) to the topic's last known consumer, else back to the producer |
@@ -34,7 +35,8 @@ if TYPE_CHECKING:
     from .mapper import Mapper, Span
 
 RUN = "services"
-GROUP = "backend"  # synthetic MCP-style server holding every external system the services call
+GROUP = "backend"  # synthetic MCP-style server holding the external HTTP / RPC hosts the services call
+DB_PREFIX = "db:"  # synthetic database server per `db.system` (`db:elasticsearch`), `mcp_register` kind "database"
 HV_RATE = float(os.environ.get("AGENTGLOW_SERVICE_HV_RATE", "5"))  # per service, requests/s sent individually
 CAP = int(os.environ.get("AGENTGLOW_SERVICE_CAP", "20"))  # individual request events/s, all services
 ERRORS_PER_WINDOW = 3  # busy service: individual error events per tick
@@ -152,6 +154,33 @@ def resource_of(a: dict, kind: str | None) -> tuple[str, str] | None:
         name = label(a.get("rpc.service") or a.get("server.address") or a.get("rpc.system"), 48)
         return (name, "api") if name else None
     return None
+
+
+def db_target(a: dict) -> tuple[str, str, str] | None:
+    """(server, resource, resource kind) of a CLIENT span with `db.system`: one database node per system, its collections /
+    tables / indices as resources (else the database name, else the system itself), or None for a non-DB span."""
+    system = a.get("db.system") or a.get("db.system.name")
+    if not system:
+        return None
+    system = label(system, 32)
+    if not system:
+        return None
+    coll = a.get("db.collection.name") or a.get("db.sql.table") or a.get("db.mongodb.collection")
+    db = a.get("db.namespace") or a.get("db.name")
+    if coll:
+        res = label(coll, 32)
+    elif db and not str(db).isdigit() and system != "redis":
+        res = label(db, 32)
+    else:
+        res = system
+    return DB_PREFIX + system, res or system, DB_KIND.get(system, "db")
+
+
+def _register(server: str, name: str, kind: str, ts: int) -> dict:
+    ev = {"type": "mcp_register", "server": server, "resources": [{"name": name, "kind": kind}], "ts": ts}
+    if server.startswith(DB_PREFIX):
+        ev["kind"] = "database"
+    return ev
 
 
 @dataclass
@@ -354,8 +383,13 @@ class Services:
         if host is not None and host.mcp:  # auto-discovered backend of that MCP server
             server, tool = host.mcp[0], host.mcp[1]
         elif s.svc:
-            server, tool = GROUP, decision_text(a.get("db.operation.name") or a.get("db.operation") or a.get("http.request.method")
-                                                or a.get("http.method") or s.name, 40)
+            tool = decision_text(a.get("db.operation.name") or a.get("db.operation") or a.get("http.request.method")
+                                 or a.get("http.method") or s.name, 40)
+            db = db_target(a)
+            if db:  # a database node of its own (not the synthetic `backend` group)
+                server, res = db[0], (db[1], db[2])
+            else:
+                server = GROUP
         else:
             return
         owner = self.m._owner(s, out)
@@ -367,7 +401,7 @@ class Services:
         self._bound(self.call_at, 4096)
         if (server, res[0]) not in self.known:
             self.known.add((server, res[0]))
-            out.append({"type": "mcp_register", "server": server, "resources": [{"name": res[0], "kind": res[1]}], "ts": s.start})
+            out.append(_register(server, res[0], res[1], s.start))
         s.backend = (owner, server, tool, res[0], res[1])
         out.append({"type": "mcp", "run_id": s.run, "id": owner, "server": server, "tool": tool, "phase": "call", "ts": s.start,
                     "resource": res[0], "resource_kind": res[1]})
@@ -599,10 +633,13 @@ class Services:
             if res:
                 rk = str(e.get("kind") or "api")
                 rk = rk if rk in ("db", "warehouse", "spark", "api", "storage", "queue") else "api"
-                if (GROUP, res) not in self.known:
-                    self.known.add((GROUP, res))
-                    out.append({"type": "mcp_register", "server": GROUP, "resources": [{"name": res, "kind": rk}], "ts": now})
-                base = {"type": "mcp", "run_id": rid, "id": aid, "server": GROUP, "tool": title, "resource": res, "resource_kind": rk}
+                server = GROUP
+                if rk in ("db", "warehouse"):  # a database node `db:<to>`, resource = `collection` when given
+                    server, res = DB_PREFIX + res, label(e.get("collection"), 32) or res
+                if (server, res) not in self.known:
+                    self.known.add((server, res))
+                    out.append(_register(server, res, rk, now))
+                base = {"type": "mcp", "run_id": rid, "id": aid, "server": server, "tool": title, "resource": res, "resource_kind": rk}
                 done = {**base, "phase": "result", "latency_ms": ms, "ts": now}
                 code = _int(e.get("status"))
                 if code is not None:

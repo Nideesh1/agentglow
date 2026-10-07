@@ -57,6 +57,17 @@ SIGNALS = ("progress", "capacity", "rejected", "job", "link", "complete", "fallb
 LIFECYCLE = ("loading", "warming", "ready", "degraded", "draining", "restarting", "fatal")
 JOB_STATES = ("queued", "running", "retrying", "done", "failed", "dead")
 POOL_KINDS = ("model", "gpu", "worker")
+# inference(kind=None): a name from these LLM families is an LLM (resource kind "llm"), anything else a classic ML model
+LLM_NAME_RE = re.compile(r"(^|[^a-z])(gpt|o[1-9]|claude|mistral|mixtral|magistral|codestral|ministral|llama|gemini|gemma|qwen|deepseek|"
+                         r"phi-?[0-9]|command-?r|granite|grok|kimi|nemotron|olmo|sonar)", re.I)
+
+
+def model_kind(kind: Any, name: str) -> str:
+    """Resource kind of an inference: "llm" (`kind="llm"`, or no kind and an LLM family name) else "model" (ML model)."""
+    k = str(kind or "").lower()
+    if k in ("llm", "ml", "model"):
+        return "llm" if k == "llm" else "model"
+    return "llm" if LLM_NAME_RE.search(name or "") else "model"
 GROUP = "backend"  # the synthetic resource group (backend.py) pools, models and caches join by default
 GROUP_ATTR = "agentglow.resource.group"  # a named resource group instead (lease / inference spans)
 _group_default: list = [None]  # process-wide default: resource_group() / watch(resource_group=...)
@@ -364,10 +375,10 @@ class Inference(_Span):
     RTF = seconds per unit for `*_s` units)."""
 
     def __init__(self, model: str, device: str | None = None, units: float | None = None, unit: str = "audio_s",
-                 group: str | None = None) -> None:
+                 group: str | None = None, kind: str | None = None) -> None:
         super().__init__(f"inference {model}", {"agentglow.inference.model": model, "agentglow.inference.device": device,
                                                 "agentglow.inference.units": _num(units), "agentglow.inference.unit": unit,
-                                                GROUP_ATTR: _group(group)})
+                                                "agentglow.inference.kind": kind, GROUP_ATTR: _group(group)})
 
     @property
     def units(self) -> float | None:
@@ -379,13 +390,17 @@ class Inference(_Span):
         self.set("agentglow.inference.units", _num(v))
 
 
-def inference(model: str, device: Any = None, units: Any = None, unit: str = "audio_s", group: str | None = None) -> Inference:
+def inference(model: str, device: Any = None, units: Any = None, unit: str = "audio_s", group: str | None = None,
+              kind: str | None = None) -> Inference:
     """`with agentglow.inference("whisper-small", units=12.5, unit="audio_s") as inf:` or as a decorator
     `@agentglow.inference("whisper-small", units=lambda audio, **_: len(audio) / 16000)` (`units` / `device` may be
     callables over the call's arguments). `group`: the resource group the model joins (e.g. "payment-integrity
-    scorer"; default: resource_group() / env AGENTGLOW_RESOURCE_GROUP, else `backend`)."""
-    return rebuild(Inference(model, device=None if callable(device) else device, units=None if callable(units) else units, unit=unit, group=group),
-                   lambda c: Inference(model, device=c.value(device, "device"), units=c.value(units, "units"), unit=unit, group=group))
+    scorer"; default: resource_group() / env AGENTGLOW_RESOURCE_GROUP, else `backend`). `kind`: "llm" (a language model)
+    or "ml" (a classic ML model: a scorer, a classifier, a regressor); default None infers it from the name (gpt,
+    claude, mistral, llama, gemini, qwen, ... = llm, anything else = ml)."""
+    return rebuild(Inference(model, device=None if callable(device) else device, units=None if callable(units) else units, unit=unit, group=group,
+                             kind=kind),
+                   lambda c: Inference(model, device=c.value(device, "device"), units=c.value(units, "units"), unit=unit, group=group, kind=kind))
 
 
 class Job(_CtxSpan):
@@ -1025,7 +1040,7 @@ class Prims:
             ev = {"type": "mcp_register", "server": group, "resources": [{"name": name, "kind": kind}], "ts": ts}
             if group != GROUP:  # a named group: "model" while it holds only models (shown as ML), else "mcp"
                 prev = self.group_kinds.get(group)
-                ev["kind"] = self.group_kinds[group] = "model" if kind == "model" and prev in (None, "model") else "mcp"
+                ev["kind"] = self.group_kinds[group] = "model" if kind in ("model", "llm") and prev in (None, "model") else "mcp"
             out.append(ev)
         r.run = run
         return r
@@ -1083,11 +1098,12 @@ class Prims:
         run = self._run_of(owner, s.run)
         ts = s.start if phase == "call" else (s.end or s.start)
         grp = self._group_of(a.get(GROUP_ATTR))
-        r = self._resource(name, "model", run, ts, out, grp)
+        mk = model_kind(a.get("agentglow.inference.kind"), name)
+        r = self._resource(name, mk, run, ts, out, grp)
         dev = _label(a.get("agentglow.inference.device"), 24) or None
         unit = _label(a.get("agentglow.inference.unit"), 16) or None
         if phase == "call":
-            self._mcp(owner, run, "infer", name, "model", "call", ts, out, device=dev, group=grp)
+            self._mcp(owner, run, "infer", name, mk, "call", ts, out, device=dev, group=grp)
             return
         ms = max(0, ts - s.start)
         units = _num(a.get("agentglow.inference.units"))
@@ -1098,7 +1114,7 @@ class Prims:
             r.units += units
             r.unit = unit
         r.dirty = True
-        self._mcp(owner, run, "infer", name, "model", "result", ts, out, ms=ms, device=dev, units=units, unit=unit if units else None,
+        self._mcp(owner, run, "infer", name, mk, "result", ts, out, ms=ms, device=dev, units=units, unit=unit if units else None,
                   group=grp, error=True if s.status == "error" else None)
 
     # ------------------------------------------------------------------ jobs
@@ -1365,7 +1381,7 @@ class Prims:
                 return out
             rk = str(e.get("kind") or ("worker" if kind == "lease" else "model"))
             rk = rk if kind == "inference" or rk in POOL_KINDS else "worker"
-            rk = "model" if kind == "inference" else rk
+            rk = model_kind(e.get("model_kind"), res) if kind == "inference" else rk
             grp = self._group_of(e.get("group"))
             r = self._resource(res, rk, run, now, out, grp)
             r.calls += 1

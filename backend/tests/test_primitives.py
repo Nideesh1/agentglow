@@ -442,6 +442,35 @@ def test_inference_group_param_names_the_group_and_marks_it_model(cap, monkeypat
     assert st["server"] == "payment-integrity scorer" and st["units"] == 3
 
 
+def test_inference_kind_llm_vs_ml(cap, monkeypatch):
+    """kind="llm" / "ml" picks the resource kind (llm / model); without it an LLM family name is an llm."""
+    monkeypatch.delenv("AGENTGLOW_RESOURCE_GROUP", raising=False)
+    with request(cap):
+        with agentglow.inference("mistral-large-4", units=1, unit="calls", group="mistral"):
+            pass
+        with agentglow.inference("house-model", units=1, unit="calls", group="mistral", kind="llm"):
+            pass
+        with agentglow.inference("lightgbm fare model", units=1, unit="predictions", group="fare model"):
+            pass
+        with agentglow.inference("gpt-scorer-v2", units=1, unit="predictions", group="fare model", kind="ml"):
+            pass
+    sp = [s for k, s in cap.items if k == "end" and s["name"] == "inference house-model"][0]
+    assert sp["attributes"]["agentglow.inference.kind"] == "llm"
+    evs, _ = feed(cap)
+    regs = {(r["server"], r["resources"][0]["name"]): (r["resources"][0]["kind"], r.get("kind")) for r in of(evs, "mcp_register")}
+    assert regs == {("mistral", "mistral-large-4"): ("llm", "model"), ("mistral", "house-model"): ("llm", "model"),
+                    ("fare model", "lightgbm fare model"): ("model", "model"), ("fare model", "gpt-scorer-v2"): ("model", "model")}
+    assert {e["resource_kind"] for e in of(evs, "mcp", resource="mistral-large-4")} == {"llm"}
+
+
+def test_flat_inference_model_kind():
+    from agentglow.mapper import Mapper
+    m = Mapper()
+    evs = m.svc.flat({"service": "api", "event": "inference", "model": "fraud-gbm", "group": "scorer", "duration_ms": 4}, 10**12)
+    evs += m.svc.flat({"service": "api", "event": "inference", "model": "house-chat", "model_kind": "llm", "group": "scorer"}, 10**12 + 1)
+    assert {(e["resource"], e["resource_kind"]) for e in of(evs, "mcp")} == {("fraud-gbm", "model"), ("house-chat", "llm")}
+
+
 def test_env_and_watch_default_group_and_mixed_kind(cap, monkeypatch):
     monkeypatch.setenv("AGENTGLOW_RESOURCE_GROUP", "scoring")
     try:
