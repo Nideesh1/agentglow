@@ -22,11 +22,11 @@
  * Both carry click targets (Picks.tsx): the crystal via the kit's Fade wrapper, the moving satellite here.
  */
 import { useFrame } from "@react-three/fiber";
-import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { Label3D, type Label3DHandle } from "../Label3D";
 import { resInfo, sparkSeries } from "../resinfo";
-import { collectionNoun, hash01, mcpGlow, mcpTitle, modelGroupPrefix, world, type McpServer, type ResourceKind } from "../world";
+import { collectionNoun, hash01, mcpGlow, mcpTitle, modelGroupPrefix, serverScale, world, type McpServer, type ResourceKind } from "../world";
 import { ResourcePick } from "./Picks";
 import { reduced, type KitBackend, type KitMcp } from "./state";
 
@@ -169,6 +169,9 @@ const satLive = new Map<string, THREE.Vector3>();
 /** Stage position of a backend's orbiting satellite right now (kit crystal look), if drawn. */
 export const satellitePos = (server: string, res: string) => satLive.get(`${server}|${res}`);
 const satRad = new Map<string, number>();
+const satSideMap = new Map<string, 1 | -1>();
+/** Which side of the satellite its name label hangs on (screen right 1, left -1). */
+export const satelliteSide = (server: string, res: string) => satSideMap.get(`${server}|${res}`) ?? 1;
 /** World radius of that satellite (labels / badges placed beside it), if drawn. */
 export const satelliteRadius = (server: string, res: string) => satRad.get(`${server}|${res}`);
 
@@ -215,6 +218,8 @@ function ApiGlobe({ mcp }: { mcp: KitMcp }) {
     [],
   );
   const g = useRef<THREE.Group>(null);
+  const body = useRef<THREE.Group>(null);
+  const lab = useRef<THREE.Group>(null);
   const spin = useRef<THREE.Group>(null);
   const ping = useRef<THREE.LineLoop>(null);
   const s = useMemo(() => ({ a: seed * 6, calls: srv.calls, at: -1e9, flash: 0 }), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -240,16 +245,18 @@ function ApiGlobe({ mcp }: { mcp: KitMcp }) {
     const pl = ping.current;
     if (pl) {
       pl.visible = pu >= 0 && pu < 1 && !reduced;
-      pl.scale.setScalar(GLOBE_R * (1 + pu * 1.4));
-      m.ping.color.copy(WHITE).lerp(col, 0.4).multiplyScalar(1.6 * (1 - pu) * k);
+      pl.scale.setScalar(GLOBE_R * (1.05 + pu * 2.2));
+      m.ping.color.copy(WHITE).lerp(col, 0.3).multiplyScalar(3.4 * (1 - pu) * k);
     }
+    const sc = serverScale(srv) * st.size;
+    if (body.current) body.current.scale.setScalar(sc);
+    if (lab.current) lab.current.position.y = GLOBE_R * sc + 0.5;
     m.halo.color.copy(col).multiplyScalar((busy ? 0.3 : 0.07 + act * 0.16 + s.flash * 0.15) * st.halo * k);
   });
-  const R = GLOBE_R * st.size;
   return (
     <group ref={g}>
-      <group scale={st.size}>
-        {st.halo > 0 && <sprite material={m.halo} scale={GEM_R * 6} renderOrder={-1} />}
+      <group ref={body} scale={st.size * serverScale(srv)}>
+        {st.halo > 0 && <sprite material={m.halo} scale={GEM_R * 4} renderOrder={-1} />}
         <group ref={spin}>
           <mesh geometry={GLOBE_GEO} material={m.body} renderOrder={1} />
           {GLOBE_LINES.map((l, i) =>
@@ -262,7 +269,9 @@ function ApiGlobe({ mcp }: { mcp: KitMcp }) {
         </group>
         <lineLoop ref={ping} geometry={CIRCLE_GEO} material={m.ping} visible={false} renderOrder={3} />
       </group>
-      <Label3D position={[0, R + 1.0, 0]} text={mcpTitle(srv)} color={srv.color} size={0.26} pxRange={[9, 13]} />
+      <group ref={lab}>
+        <Label3D text={mcpTitle(srv)} color={srv.color} size={0.3} anchorY="bottom" pxRange={[10, 14]} />
+      </group>
     </group>
   );
 }
@@ -286,14 +295,18 @@ function ModelHub({ mcp }: { mcp: KitMcp }) {
       rings: [0, 1].map(() => new THREE.MeshBasicMaterial({ color: "#000", transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })),
       halo: spriteMat(),
       hub: spriteMat(),
+      ping: new THREE.LineBasicMaterial({ color: "#000", transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
     }),
     [],
   );
   const g = useRef<THREE.Group>(null);
+  const body = useRef<THREE.Group>(null);
+  const lab = useRef<THREE.Group>(null);
+  const ping = useRef<THREE.LineLoop>(null);
   const r0 = useRef<THREE.Group>(null);
   const r1 = useRef<THREE.Group>(null);
   const label = useRef<Label3DHandle>(null);
-  const s = useMemo(() => ({ a: seed * 6, w: 0.3, calls: srv.calls, flare: 0, pre: "", at: 0, col: new THREE.Color(SAT_KIND_COLOR.model) }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const s = useMemo(() => ({ a: seed * 6, w: 0.3, calls: srv.calls, flare: 0, pre: "", at: 0, pingAt: -1e9, col: new THREE.Color(SAT_KIND_COLOR.model) }), []); // eslint-disable-line react-hooks/exhaustive-deps
   useFrame(({ clock }, dt) => {
     const now = performance.now();
     g.current?.position.set(mcp.pos.x, mcp.pos.y + liftOf(st, srv), mcp.pos.z);
@@ -311,7 +324,17 @@ function ModelHub({ mcp }: { mcp: KitMcp }) {
     const busy = srv.inflight > 0;
     const act = mcpGlow(srv.activeAt, now, 1.4);
     const d = Math.min(dt, 0.05);
-    if (srv.calls !== s.calls) (s.calls = srv.calls), (s.flare = 1);
+    if (srv.calls !== s.calls) (s.calls = srv.calls), (s.flare = 1), (s.pingAt = now);
+    const pu = (now - s.pingAt) / 800;
+    const pg = ping.current;
+    if (pg) {
+      pg.visible = pu >= 0 && pu < 1 && !reduced;
+      pg.scale.setScalar(0.85 + pu * 1.6);
+      m.ping.color.copy(WHITE).lerp(s.col, 0.3).multiplyScalar(3.4 * (1 - pu) * st.gain);
+    }
+    const sc = serverScale(srv) * st.size;
+    if (body.current) body.current.scale.setScalar(sc);
+    if (lab.current) lab.current.position.y = 1.0 * sc + 0.5;
     s.flare = Math.max(0, s.flare - d * 1.6);
     s.w += ((busy ? 3 : 0.35 + act * 1.2 + s.flare * 2) - s.w) * Math.min(1, d * 2.5);
     if (!reduced) s.a += s.w * d;
@@ -326,7 +349,7 @@ function ModelHub({ mcp }: { mcp: KitMcp }) {
     cu.uGain.value = (busy ? 1.3 : 0.9 + act * 0.3 + s.flare * 0.4) * k;
     cu.uCore.value = (busy ? 0.5 : 0.15 + act * 0.2) * k + s.flare * 0.5;
     for (const r of m.rings) r.color.copy(s.col).lerp(WHITE, busy ? 0.4 : 0.15).multiplyScalar((busy ? 1.5 : 0.6 + act * 0.6 + s.flare * 0.8) * k);
-    m.halo.color.copy(s.col).multiplyScalar((busy ? 0.34 : 0.08 + act * 0.18 + s.flare * 0.15) * st.halo * k);
+    m.halo.color.copy(s.col).multiplyScalar((busy ? 0.3 : 0.07 + act * 0.15 + s.flare * 0.3) * st.halo * k);
     m.hub.color.copy(WHITE).lerp(s.col, 0.4).multiplyScalar((busy ? 0.9 : 0.3 + act * 0.35 + s.flare * 0.4) * st.halo * k);
     if (busy && !reduced && st.emit && g.current && Math.random() < 0.3) {
       const a = Math.random() * Math.PI * 2;
@@ -335,12 +358,12 @@ function ModelHub({ mcp }: { mcp: KitMcp }) {
       st.emit(_p, _v, Math.random() < 0.4 ? WHITE : s.col);
     }
   });
-  const R = 0.8 * st.size;
   return (
     <group ref={g}>
-      <group scale={st.size}>
-        {st.halo > 0 && <sprite material={m.halo} scale={GEM_R * 6.5} renderOrder={-1} />}
+      <group ref={body} scale={st.size * serverScale(srv)}>
+        {st.halo > 0 && <sprite material={m.halo} scale={GEM_R * 4.5} renderOrder={-1} />}
         {st.halo > 0 && <sprite material={m.hub} scale={GEM_R * 1.6} renderOrder={-1} />}
+        <lineLoop ref={ping} geometry={CIRCLE_GEO} material={m.ping} visible={false} rotation-x={0.35} renderOrder={3} />
         <mesh geometry={HUB_CORE_GEO} material={m.core} renderOrder={1} />
         <group ref={r0}>
           <mesh geometry={HUB_RING_GEO} material={m.rings[0]} renderOrder={2} />
@@ -349,7 +372,9 @@ function ModelHub({ mcp }: { mcp: KitMcp }) {
           <mesh geometry={HUB_RING_GEO} material={m.rings[1]} scale={1.12} renderOrder={2} />
         </group>
       </group>
-      <Label3D ref={label} position={[0, R + 1.15, 0]} text={mcpTitle(srv)} color={srv.color} size={0.28} pxRange={[9, 13]} />
+      <group ref={lab}>
+        <Label3D ref={label} text={mcpTitle(srv)} color={srv.color} size={0.3} anchorY="bottom" pxRange={[10, 14]} />
+      </group>
     </group>
   );
 }
@@ -393,6 +418,8 @@ function DbStack({ mcp }: { mcp: KitMcp }) {
     [],
   );
   const g = useRef<THREE.Group>(null);
+  const body = useRef<THREE.Group>(null);
+  const lab = useRef<THREE.Group>(null);
   const tilt = useRef<THREE.Group>(null);
   const pulse = useRef<THREE.LineLoop>(null);
   const s = useMemo(() => ({ calls: srv.calls, at: -1e9, flash: 0 }), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -429,11 +456,14 @@ function DbStack({ mcp }: { mcp: KitMcp }) {
     if (pl) {
       pl.visible = pOn;
       pl.position.y = py;
-      pl.scale.setScalar(DB_R * (1.08 + 0.12 * Math.sin(Math.min(1, u) * Math.PI)));
-      m.pulse.color.copy(WHITE).lerp(col, 0.35).multiplyScalar(1.8 * (1 - Math.max(0, u) * 0.5) * k);
+      pl.scale.setScalar(DB_R * (1.15 + 0.45 * Math.sin(Math.min(1, u) * Math.PI)));
+      m.pulse.color.copy(WHITE).lerp(col, 0.25).multiplyScalar(3.6 * (1 - Math.max(0, u) * 0.4) * k);
     }
-    m.halo.color.copy(col).multiplyScalar((busy ? 0.34 : 0.08 + act * 0.18 + s.flash * 0.12) * st.halo * k);
-    m.hub.color.copy(WHITE).lerp(col, 0.45).multiplyScalar((busy ? 0.8 : 0.26 + act * 0.3 + s.flash * 0.3) * st.halo * k);
+    const sc = serverScale(srv) * st.size;
+    if (body.current) body.current.scale.setScalar(sc);
+    if (lab.current) lab.current.position.y = (DB_TOP + DB_GAP) * sc + 0.5;
+    m.halo.color.copy(col).multiplyScalar((busy ? 0.3 : 0.07 + act * 0.15 + s.flash * 0.3) * st.halo * k);
+    m.hub.color.copy(WHITE).lerp(col, 0.45).multiplyScalar((busy ? 0.8 : 0.26 + act * 0.3 + s.flash * 0.6) * st.halo * k);
     if (busy && !reduced && st.emit && g.current && Math.random() < 0.35) {
       const a = Math.random() * Math.PI * 2;
       _p.set(Math.cos(a) * DB_R * st.size, DB_TOP * st.size, Math.sin(a) * DB_R * st.size).add(g.current.position);
@@ -441,11 +471,10 @@ function DbStack({ mcp }: { mcp: KitMcp }) {
       st.emit(_p, _v, Math.random() < 0.4 ? WHITE : col);
     }
   });
-  const top = DB_TOP * st.size;
   return (
     <group ref={g}>
-      <group scale={st.size}>
-        {st.halo > 0 && <sprite material={m.halo} scale={GEM_R * 6.5} renderOrder={-1} />}
+      <group ref={body} scale={st.size * serverScale(srv)}>
+        {st.halo > 0 && <sprite material={m.halo} scale={GEM_R * 4.5} renderOrder={-1} />}
         {st.halo > 0 && <sprite material={m.hub} scale={GEM_R * 1.8} renderOrder={-1} />}
         <group ref={tilt}>
           {DB_DISCS.map((y, i) => (
@@ -458,7 +487,9 @@ function DbStack({ mcp }: { mcp: KitMcp }) {
           <lineLoop ref={pulse} geometry={CIRCLE_GEO} material={m.pulse} visible={false} renderOrder={3} />
         </group>
       </group>
-      <Label3D position={[0, top + 1.05, 0]} text={mcpTitle(srv)} color={srv.color} size={0.28} pxRange={[9, 13]} />
+      <group ref={lab}>
+        <Label3D text={mcpTitle(srv)} color={srv.color} size={0.3} anchorY="bottom" pxRange={[10, 14]} />
+      </group>
     </group>
   );
 }
@@ -760,7 +791,15 @@ export function McpSatellite({ mcp, backend }: { mcp: KitMcp; backend: KitBacken
   const ringCol = useMemo(() => kcol.clone().lerp(base, 0.35), [kcol, base]);
   const isDb = srv.kind === "database";
   const tagTxt = isDb ? collectionNoun(srv.name) : KIND_TAG[kind];
-  const orb = useMemo(() => orbitOf(srv.name, res.name, backend.k, st.size, isDb), [srv.name, res.name, backend.k, st.size, isDb]);
+  // big nodes (database, model hub): orbits and bodies grow with the node, so they clear it
+  const big = serverScale(srv);
+  const orbSize = st.size * (big > 1 ? big * 0.72 : 1);
+  const orb = useMemo(() => orbitOf(srv.name, res.name, backend.k, orbSize, isDb), [srv.name, res.name, backend.k, orbSize, isDb]);
+  // the label sits on the side of the satellite facing away from the node (flips with hysteresis)
+  const [side, setSide] = useState<1 | -1>(1);
+  useEffect(() => {
+    satSideMap.set(`${srv.name}|${res.name}`, side);
+  }, [srv.name, res.name, side]);
   const m = useMemo(
     () => ({
       body: satMat(),
@@ -794,7 +833,7 @@ export function McpSatellite({ mcp, backend }: { mcp: KitMcp; backend: KitBacken
     return v;
   }, [key]);
   useEffect(() => () => void (satLive.get(key) === live && satLive.delete(key)), [key, live]);
-  const R = 0.36 * (res.sub === "warehouse" || res.sub === "spark" ? 1.12 : 1) * st.size;
+  const R = 0.36 * (res.sub === "warehouse" || res.sub === "spark" ? 1.12 : 1) * st.size * (big > 1 ? 1.6 : 1);
   useEffect(() => {
     satRad.set(key, R);
     return () => void satRad.delete(key);
@@ -864,8 +903,11 @@ export function McpSatellite({ mcp, backend }: { mcp: KitMcp; backend: KitBacken
       gl.scale.setScalar(R * pulse * 2.3);
       m.glyph.color.copy(WHITE).lerp(kcol, 0.15).multiplyScalar(0.9 + lit * 0.4 * k);
     }
-    // the name label hangs just right of the sphere (screen right), wherever the satellite is on its orbit
-    _v.set(1, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(R * pulse * 1.25);
+    // the name label hangs beside the sphere on its outer side (screen space), away from the node
+    _v.set(1, 0, 0).applyQuaternion(camera.quaternion);
+    const dx = _rq.copy(_p).sub(_q).dot(_v);
+    if (dx * side < -R * 0.6) setSide(side > 0 ? -1 : 1);
+    _v.multiplyScalar(R * pulse * 1.3 * side);
     tag.current?.position.copy(_v);
     // the bolt: crystal -> satellite on a call, satellite -> crystal on a result
     const bt = (now - s.boltAt) / BOLT_MS;
@@ -910,7 +952,7 @@ export function McpSatellite({ mcp, backend }: { mcp: KitMcp; backend: KitBacken
     _rq.copy(_q).sub(camera.position);
     const dS = _v.length(), dC = _rq.length();
     const sep = _v.multiplyScalar(dC / Math.max(1e-3, dS)).distanceTo(_rq);
-    const occ = dS > dC && sep < GEM_R * st.size * 1.05 ? 1 : 0;
+    const occ = dS > dC && sep < GEM_R * st.size * big * 1.05 ? 1 : 0;
     s.occ += (occ - s.occ) * Math.min(1, d * 8);
     if (label.current) {
       if (lk !== last.current) {
@@ -934,7 +976,7 @@ export function McpSatellite({ mcp, backend }: { mcp: KitMcp; backend: KitBacken
         <sprite ref={glyph} material={m.glyph} renderOrder={2} />
         <ResourcePick sel={{ type: "backend", server: srv.name, resource: res.name }} r={R * 1.5} color={srv.color} mix={() => backend.mix * mcp.mix} />
         <group ref={tag}>
-          <Label3D ref={label} text={res.name} secondary={tagTxt} color={SAT_KIND_COLOR[kind]} size={0.22} anchorX="left" anchorY="middle" textAlign="left" opacity={0.85} pxRange={[9, 12.5]} />
+          <Label3D ref={label} text={res.name} secondary={tagTxt} color={SAT_KIND_COLOR[kind]} size={0.22} anchorX={side > 0 ? "left" : "right"} anchorY="middle" textAlign={side > 0 ? "left" : "right"} opacity={0.85} pxRange={[9, 12.5]} />
         </group>
       </group>
     </group>

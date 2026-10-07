@@ -549,6 +549,12 @@ export const API_COLOR = "#a3e635";
 export const BACKEND_GROUP = "backend";
 /** A real MCP server (not a database, model hub, external API or the synthetic backend group). */
 export const isRealMcp = (srv: Pick<McpServer, "kind" | "name">) => (srv.kind === undefined || srv.kind === "mcp") && srv.name !== BACKEND_GROUP;
+/**
+ * Visual weight of a side node: databases, model hubs and external API globes are drawn at about a service sun's size
+ * (2.2x the MCP crystal), growing mildly with call volume (capped at +0.6); everything else 1.
+ */
+export const serverScale = (srv: Pick<McpServer, "kind" | "calls">) =>
+  srv.kind === "database" || srv.kind === "model" || srv.kind === "api" ? 2.2 + Math.min(0.6, Math.log10(1 + srv.calls) * 0.25) : 1;
 /** the session has drawn at least one real MCP server */
 export const hasRealMcp = () => {
   for (const s of world.mcpServers.values()) if (isRealMcp(s)) return true;

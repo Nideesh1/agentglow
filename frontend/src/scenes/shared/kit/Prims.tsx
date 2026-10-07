@@ -19,7 +19,7 @@ import { presence, world } from "../world";
 import { fit } from "./fit";
 import { CHIP_FRAG, CHIP_VERT } from "./HighVolume";
 import { labels } from "./labels";
-import { satellitePos, satelliteRadius } from "./Crystal";
+import { satellitePos, satelliteRadius, satelliteSide } from "./Crystal";
 import { agentLive, kit, reduced, type KitAgent, type KitBackend, type KitMcp } from "./state";
 
 const PLANE = new THREE.PlaneGeometry(2, 2);
@@ -444,6 +444,7 @@ export function ResourceStat({ mcp, backend }: { mcp: KitMcp; backend: KitBacken
   const l = useRef<Label3DHandle>(null);
   const st = useMemo(() => ({ key: "", at: 0, segs: [] as LabelSeg[] }), []);
   const key = `${mcp.srv.name}|${backend.res.name}`;
+  const [side, setSide] = useState<1 | -1>(1);
   useFrame(({ camera, size: vp }) => {
     const o = g.current;
     if (!o) return;
@@ -469,13 +470,15 @@ export function ResourceStat({ mcp, backend }: { mcp: KitMcp; backend: KitBacken
     UP.set(0, 1, 0).applyQuaternion(camera.quaternion);
     if (sp) {
       RIGHT.set(1, 0, 0).applyQuaternion(camera.quaternion);
-      o.position.copy(sp).addScaledVector(RIGHT, (satelliteRadius(mcp.srv.name, backend.res.name) ?? 0) * 1.25).addScaledVector(UP, -17 * wpp * labels.pxk);
+      const sd = satelliteSide(mcp.srv.name, backend.res.name);
+      if (sd !== side) setSide(sd);
+      o.position.copy(sp).addScaledVector(RIGHT, (satelliteRadius(mcp.srv.name, backend.res.name) ?? 0) * 1.3 * sd).addScaledVector(UP, -17 * wpp * labels.pxk);
     } else o.position.copy(backend.pos).addScaledVector(UP, -24 * wpp * labels.pxk);
   });
   const onSat = !!satellitePos(mcp.srv.name, backend.res.name);
   return (
     <group ref={g} visible={false}>
-      <Label3D ref={l} text="" color="#94a3b8" textColor="#cbd5e1" size={STAT.size} pxRange={STAT.px} anchorY="top" anchorX={onSat ? "left" : "center"} plate="none" font="mono" opacity={0} fadeMs={0} renderOrder={24} fit />
+      <Label3D ref={l} text="" color="#94a3b8" textColor="#cbd5e1" size={STAT.size} pxRange={STAT.px} anchorY="top" anchorX={onSat ? (side > 0 ? "left" : "right") : "center"} plate="none" font="mono" opacity={0} fadeMs={0} renderOrder={24} fit />
     </group>
   );
 }
