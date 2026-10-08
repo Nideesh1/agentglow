@@ -1038,9 +1038,15 @@ class Prims:
         if key not in self.m.svc.known:
             self.m.svc.known.add(key)
             ev = {"type": "mcp_register", "server": group, "resources": [{"name": name, "kind": kind}], "ts": ts}
-            if group != GROUP:  # a named group: "model" while it holds only models (shown as ML), else "mcp"
+            if group != GROUP:  # a named group: "model"/"storage" while it holds only that kind (shown as ML / a
+                # storage node), else "mcp" -- same rule either way: once a group has taken on a special kind, a
+                # differently-kinded resource added later falls back to plain "mcp" rather than flip-flopping.
                 prev = self.group_kinds.get(group)
-                ev["kind"] = self.group_kinds[group] = "model" if kind in ("model", "llm") and prev in (None, "model") else "mcp"
+                ev["kind"] = self.group_kinds[group] = (
+                    "model" if kind in ("model", "llm") and prev in (None, "model")
+                    else "storage" if kind == "storage" and prev in (None, "storage")
+                    else "mcp"
+                )
             out.append(ev)
         r.run = run
         return r

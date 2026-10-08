@@ -442,6 +442,23 @@ def test_inference_group_param_names_the_group_and_marks_it_model(cap, monkeypat
     assert st["server"] == "payment-integrity scorer" and st["units"] == 3
 
 
+def test_resource_group_of_only_storage_resources_is_a_storage_node():
+    """`Prims._resource` (primitives.py): a named group whose resources are all kind "storage" (object-storage
+    buckets, mirroring the "model" group rule) registers as server kind "storage", not generic "mcp". A later
+    differently-kinded resource in that same group falls back to plain "mcp" (no flip-flopping), same as "model"."""
+    m = Mapper()
+    out: list = []
+    m.prims._resource("uploads", "storage", "run-1", 10, out, "s3")
+    reg = [e for e in out if e["type"] == "mcp_register"][0]
+    assert reg["server"] == "s3" and reg["kind"] == "storage"
+    out2: list = []
+    m.prims._resource("other-bucket", "storage", "run-1", 11, out2, "s3")
+    assert [e for e in out2 if e["type"] == "mcp_register"][0]["kind"] == "storage"
+    out3: list = []
+    m.prims._resource("some-queue", "queue", "run-1", 12, out3, "s3")
+    assert [e for e in out3 if e["type"] == "mcp_register"][0]["kind"] == "mcp"
+
+
 def test_inference_kind_llm_vs_ml(cap, monkeypatch):
     """kind="llm" / "ml" picks the resource kind (llm / model); without it an LLM family name is an llm."""
     monkeypatch.delenv("AGENTGLOW_RESOURCE_GROUP", raising=False)

@@ -38,6 +38,7 @@ RUN = "services"
 GROUP = "backend"  # synthetic MCP-style server holding the external HTTP / RPC hosts the services call
 API_PREFIX = "api:"  # synthetic external API node per HTTP / RPC host (`api:payments:9100`), `mcp_register` kind "api"
 DB_PREFIX = "db:"  # synthetic database server per `db.system` (`db:elasticsearch`), `mcp_register` kind "database"
+STORAGE_PREFIX = "storage:"  # synthetic object-storage node per blob store (`storage:minio`), `mcp_register` kind "storage"
 HV_RATE = float(os.environ.get("AGENTGLOW_SERVICE_HV_RATE", "5"))  # per service, requests/s sent individually
 CAP = int(os.environ.get("AGENTGLOW_SERVICE_CAP", "20"))  # individual request events/s, all services
 ERRORS_PER_WINDOW = 3  # busy service: individual error events per tick
@@ -183,6 +184,8 @@ def _register(server: str, name: str, kind: str, ts: int) -> dict:
         ev["kind"] = "database"
     elif server.startswith(API_PREFIX):
         ev["kind"] = "api"
+    elif server.startswith(STORAGE_PREFIX):
+        ev["kind"] = "storage"
     return ev
 
 
@@ -636,7 +639,7 @@ class Services:
             if res:
                 rk = str(e.get("kind") or "api")
                 rk = rk if rk in ("db", "warehouse", "spark", "api", "storage", "queue") else "api"
-                server = API_PREFIX + res if rk == "api" else GROUP
+                server = API_PREFIX + res if rk == "api" else STORAGE_PREFIX + res if rk == "storage" else GROUP
                 if rk in ("db", "warehouse"):  # a database node `db:<to>`, resource = `collection` when given
                     server, res = DB_PREFIX + res, label(e.get("collection"), 32) or res
                 if (server, res) not in self.known:

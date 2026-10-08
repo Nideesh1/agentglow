@@ -338,9 +338,11 @@ export function ResourceDetail({ sel, onClose }: { sel: ResSel; onClose: () => v
           ? `database · ${srv?.resources.size ?? 0} ${srv?.resources.size === 1 ? collectionNoun(sel.server) : collectionNouns(sel.server)}`
           : srv?.kind === "api" || world.mcpKinds.get(sel.server) === "api"
             ? "external API host"
-            : sel.server === "backend" && !srv?.kind
-              ? "backend resources (pools, models, caches)"
-              : "MCP server / resource group"
+            : srv?.kind === "storage" || world.mcpKinds.get(sel.server) === "storage"
+              ? "object storage host"
+              : sel.server === "backend" && !srv?.kind
+                ? "backend resources (pools, models, caches)"
+                : "MCP server / resource group"
       : isModel
         ? `${modelCount} · in ${sel.server}`
         : sel.type === "backend"

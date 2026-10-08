@@ -23,13 +23,14 @@ export function shortRun(run: string) {
   return isServicesRun(run) ? "services" : run.replace("run-", "").slice(0, 6);
 }
 
-/** HUD totals of the side nodes by what they are (zeros omitted): "1 MCP", "1 DB", "3 models", "1 API" */
+/** HUD totals of the side nodes by what they are (zeros omitted): "1 MCP", "1 DB", "3 models", "1 API", "1 Storage" */
 function nodeCounts(): [number, string, string][] {
-  let mcp = 0, db = 0, models = 0, api = 0;
+  let mcp = 0, db = 0, models = 0, api = 0, storage = 0;
   for (const s of world.mcpServers.values()) {
     if (s.kind === "database") db++;
     else if (s.kind === "model") models += Math.max(1, s.resources.size);
     else if (s.kind === "api") api++;
+    else if (s.kind === "storage") storage++;
     else if (isRealMcp(s)) mcp++;
   }
   const out: [number, string, string][] = [];
@@ -37,6 +38,7 @@ function nodeCounts(): [number, string, string][] {
   if (db) out.push([db, "DB", "databases queried"]);
   if (models) out.push([models, models === 1 ? "model" : "models", "models (LLM / ML) called"]);
   if (api) out.push([api, api === 1 ? "API" : "APIs", "external API hosts called"]);
+  if (storage) out.push([storage, "Storage", "object-storage hosts called"]);
   return out;
 }
 
@@ -842,7 +844,7 @@ function recentContext(i: Instance, n = 6): CtxRow[] {
   for (const e of i.recent) {
     if (calls >= 5) break;
     if (e.type === "tool") rows.push({ k: `t${calls++}`, badge: "tool", text: e.tool, ts: e.ts });
-    else if (e.type === "mcp" && e.phase === "call") rows.push({ k: `m${calls++}`, badge: world.mcpKinds.get(e.server) === "database" ? "DB" : "MCP", text: `${serverLabel(e.server)} · ${e.tool}`, ts: e.ts });
+    else if (e.type === "mcp" && e.phase === "call") rows.push({ k: `m${calls++}`, badge: world.mcpKinds.get(e.server) === "database" ? "DB" : world.mcpKinds.get(e.server) === "storage" ? "Storage" : "MCP", text: `${serverLabel(e.server)} · ${e.tool}`, ts: e.ts });
   }
   return rows.sort((a, b) => b.ts - a.ts).slice(0, n);
 }

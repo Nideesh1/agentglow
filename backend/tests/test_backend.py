@@ -210,6 +210,16 @@ def test_flat_db_call_is_a_database_node():
     assert {(e["server"], e["resource"]) for e in types(evs, "mcp")} == {("db:postgres", "orders"), ("api:stripe", "stripe")}
 
 
+def test_flat_storage_call_is_a_storage_node():
+    """A flat `call` event tagged kind "storage" becomes its own `storage:<to>` node (kind "storage"), not generic MCP."""
+    hub = Hub()
+    hub.ingest_events([{"service": "api", "event": "call", "to": "minio", "kind": "storage", "name": "PUT"}], T)
+    evs = list(hub.topology.values()) + list(hub.buffer)
+    reg = {e["server"]: e for e in types(evs, "mcp_register")}
+    assert reg["storage:minio"]["kind"] == "storage"
+    assert {(e["server"], e["resource"]) for e in types(evs, "mcp")} == {("storage:minio", "minio")}
+
+
 def test_hub_topology_keeps_database_kind():
     hub = Hub()
     req = http(path="/q")

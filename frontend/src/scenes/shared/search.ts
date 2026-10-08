@@ -137,7 +137,7 @@ function recompute() {
       if (own) {
         serverNames.add(s.name);
         servers.add(s.name);
-        if (hits.length < MAX_HITS) hits.push({ kind: "server", id: s.name, label: serverLabel(s.name), sub: s.kind === "model" ? `${modelGroupPrefix(s.name)} group` : s.kind === "database" ? "database" : s.kind === "api" ? "external API" : s.name === "backend" ? "backend" : "MCP server", server: s.name });
+        if (hits.length < MAX_HITS) hits.push({ kind: "server", id: s.name, label: serverLabel(s.name), sub: s.kind === "model" ? `${modelGroupPrefix(s.name)} group` : s.kind === "database" ? "database" : s.kind === "api" ? "external API" : s.kind === "storage" ? "object storage" : s.name === "backend" ? "backend" : "MCP server", server: s.name });
       }
       for (const res of s.resources.values()) {
         if (!res.name.toLowerCase().includes(n)) continue;
